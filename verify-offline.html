@@ -1,0 +1,2753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>BJ21 — Offline Round Verify</title>
+<meta name="description" content="Provably fair blackjack round verifier. Runs fully in your browser with Web Crypto. No server required after page load.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♠️</text></svg>">
+<style>
+/* ── Design tokens — shared with public/index.html ─────────────────────── */
+:root {
+  --bg: #0b1018;
+  --surface: #131b28;
+  --surface-2: #182336;
+  --surface-3: #0e1622;
+  --border: #24304a;
+  --border-soft: #1c2740;
+  --text: #c6d0e0;
+  --text-strong: #f2f5fa;
+  --muted: #7e8ba1;
+  --muted-dim: #78859c;
+  --gold: #e8b64c;
+  --gold-soft: rgba(232, 182, 76, 0.13);
+  --green: #3ddc84;
+  --green-soft: rgba(61, 220, 132, 0.11);
+  --red: #ff5d5d;
+  --red-soft: rgba(255, 93, 93, 0.1);
+  --blue: #5aa2ff;
+  --blue-soft: rgba(90, 162, 255, 0.11);
+  --amber: #ffb648;
+  --amber-soft: rgba(255, 182, 72, 0.11);
+  --mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  /* legacy aliases kept so any stray rule still resolves */
+  --panel: var(--surface);
+  --panel2: var(--surface-2);
+  --accent: var(--blue);
+  --ok: var(--green);
+  --bad: var(--red);
+  --warn: var(--amber);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { color-scheme: dark; -webkit-text-size-adjust: 100%; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(900px 520px at 50% -8%, rgba(90, 162, 255, 0.08), transparent 62%),
+    radial-gradient(1100px 700px at 50% 108%, rgba(232, 182, 76, 0.045), transparent 58%),
+    var(--bg);
+  background-attachment: fixed;
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  padding: 0 16px 64px;
+}
+
+.wrap { max-width: 940px; margin: 0 auto; }
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--blue);
+  color: var(--text-strong);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  z-index: 50;
+}
+.skip-link:focus { left: 16px; }
+
+/* ── Masthead ──────────────────────────────────────────────────────────── */
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 30px 0 20px;
+}
+.brand { display: flex; align-items: center; gap: 13px; }
+.brand .spade {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: 13px;
+  background: linear-gradient(145deg, #21304a, #131b28);
+  border: 1px solid var(--border);
+  color: var(--gold);
+  font-size: 1.35rem;
+}
+h1 {
+  font-size: 1.32rem;
+  font-weight: 800;
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+.brand .kicker {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+}
+.trust li {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--green);
+  background: var(--green-soft);
+  border: 1px solid rgba(61, 220, 132, 0.3);
+  border-radius: 999px;
+  padding: 4px 11px;
+  white-space: nowrap;
+}
+
+.lede {
+  font-size: 1rem;
+  color: var(--text);
+  max-width: 68ch;
+  margin-bottom: 22px;
+}
+.lede strong { color: var(--text-strong); font-weight: 700; }
+
+/* ── Quick steps ───────────────────────────────────────────────────────── */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  list-style: none;
+  margin-bottom: 26px;
+}
+.step {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-3) 100%);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 13px 14px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.step strong { color: var(--text-strong); font-weight: 700; }
+.step .num {
+  flex: 0 0 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--blue-soft);
+  border: 1px solid rgba(90, 162, 255, 0.4);
+  color: var(--blue);
+  font-weight: 800;
+  font-size: 0.72rem;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+}
+
+/* ── Panels ────────────────────────────────────────────────────────────── */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 14px;
+}
+.panel-hero {
+  border-color: var(--border);
+  box-shadow: var(--shadow);
+  background: linear-gradient(180deg, #16202f 0%, var(--surface) 100%);
+}
+.panel > h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+  margin-bottom: 4px;
+}
+.panel > h2 .step-badge {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--gold-soft);
+  border: 1px solid rgba(232, 182, 76, 0.35);
+  color: var(--gold);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.section-title {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin: 30px 0 12px;
+  padding-left: 2px;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-bottom: 14px;
+  max-width: 78ch;
+}
+.note:last-child { margin-bottom: 0; }
+.note strong, .step strong { color: var(--text); }
+
+code {
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: var(--blue);
+  font-family: var(--mono);
+  font-size: 0.88em;
+  word-break: break-word;
+}
+
+/* ── Form controls ─────────────────────────────────────────────────────── */
+label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin: 14px 0 6px;
+}
+label code { text-transform: none; letter-spacing: 0; }
+
+input, textarea, select {
+  width: 100%;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 0.79rem;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+input::placeholder, textarea::placeholder { color: var(--muted-dim); }
+textarea { min-height: 170px; resize: vertical; line-height: 1.6; }
+input:hover, textarea:hover, select:hover { border-color: #2e3c5c; }
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(90, 162, 255, 0.16);
+}
+select {
+  font-family: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.row > div > label:first-child { margin-top: 0; }
+
+.seed-block {
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px 14px;
+  margin-top: 12px;
+}
+.seed-block header {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.seed-block label { margin-top: 12px; }
+.seed-block input { background: var(--surface); }
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 18px;
+  align-items: center;
+}
+button {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  padding: 10px 17px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  color: var(--text);
+  background: transparent;
+  transition: transform 0.12s, filter 0.15s, border-color 0.15s, background 0.15s;
+}
+button:hover { transform: translateY(-1px); }
+button:active { transform: translateY(0); }
+.btn-primary {
+  background: linear-gradient(150deg, #f3c75e, #d99a26);
+  color: #241a05;
+  font-weight: 800;
+  box-shadow: 0 4px 14px rgba(232, 182, 76, 0.24);
+}
+.btn-secondary {
+  background: var(--blue-soft);
+  border-color: rgba(90, 162, 255, 0.38);
+  color: var(--blue);
+}
+.btn-secondary:hover { background: rgba(90, 162, 255, 0.17); }
+.btn-ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+}
+.btn-ghost:hover { border-color: var(--muted); color: var(--text); }
+.btn-tiny {
+  padding: 3px 9px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  border-radius: 7px;
+  border-color: var(--border);
+  color: var(--blue);
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.btn-tiny:hover { border-color: var(--blue); background: var(--blue-soft); }
+.hotkey {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted-dim);
+  margin-left: 2px;
+}
+.hotkey kbd {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+
+/* ── Tabs (segmented control) ──────────────────────────────────────────── */
+.tabs {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  border-radius: 11px;
+  margin-bottom: 14px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.tab {
+  padding: 7px 15px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tab:hover { color: var(--text); transform: none; }
+.tab.active {
+  background: var(--surface-2);
+  color: var(--text-strong);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
+}
+.tab-panel, .fy-sub { display: none; }
+.tab-panel.active, .fy-sub.active { display: block; animation: fade 0.18s ease-out; }
+@keyframes fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+.fy-mode {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  border-radius: 11px;
+  margin-bottom: 14px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* ── Inline status / errors ────────────────────────────────────────────── */
+.error-inline, .fy-error {
+  display: none;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 13px;
+  border-radius: var(--radius-sm);
+  background: var(--red-soft);
+  border: 1px solid rgba(255, 93, 93, 0.35);
+  color: #ffb0b0;
+  font-size: 0.82rem;
+}
+.error-inline.show, .fy-error.show { display: flex; }
+.error-inline::before, .fy-error::before { content: '⚠'; color: var(--red); flex: 0 0 auto; }
+
+.input-status {
+  margin-top: 10px;
+  font-size: 0.76rem;
+  font-family: var(--mono);
+  color: var(--muted);
+  min-height: 1.2em;
+}
+.input-status.good { color: var(--green); }
+.input-status.bad { color: var(--red); }
+
+/* ── Result ────────────────────────────────────────────────────────────── */
+.empty-state {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 34px 20px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.empty-state .big { font-size: 1.6rem; opacity: 0.5; }
+.empty-state.hide { display: none; }
+
+.result {
+  display: none;
+  align-items: center;
+  gap: 14px;
+  margin-top: 4px;
+  padding: 16px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+}
+.result.show { display: flex; }
+.result .result-icon {
+  flex: 0 0 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  font-size: 1.2rem;
+  background: rgba(0, 0, 0, 0.22);
+}
+.result .result-title {
+  display: block;
+  font-size: 0.98rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  margin-bottom: 2px;
+}
+.result .result-sub { color: var(--text); font-weight: 400; opacity: 0.85; }
+.result.ok { background: var(--green-soft); border: 1px solid rgba(61, 220, 132, 0.4); color: var(--green); }
+.result.warn { background: var(--amber-soft); border: 1px solid rgba(255, 182, 72, 0.4); color: var(--amber); }
+.result.bad { background: var(--red-soft); border: 1px solid rgba(255, 93, 93, 0.4); color: var(--red); }
+
+.tally { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.tally span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--surface-3);
+}
+.tally .t-pass { color: var(--green); border-color: rgba(61, 220, 132, 0.35); background: var(--green-soft); }
+.tally .t-fail { color: var(--red); border-color: rgba(255, 93, 93, 0.35); background: var(--red-soft); }
+.tally .t-skip { color: var(--amber); border-color: rgba(255, 182, 72, 0.35); background: var(--amber-soft); }
+
+.checks { margin-top: 14px; display: grid; gap: 7px; }
+.check {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 11px;
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--border);
+  font-size: 0.84rem;
+}
+.check[data-state="pass"] { border-left-color: var(--green); }
+.check[data-state="fail"] { border-left-color: var(--red); background: rgba(255, 93, 93, 0.05); }
+.check[data-state="skip"] { border-left-color: var(--amber); }
+.check .icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 0.72rem;
+  font-weight: 800;
+  margin-top: 1px;
+}
+.check[data-state="pass"] .icon { background: var(--green-soft); color: var(--green); }
+.check[data-state="fail"] .icon { background: var(--red-soft); color: var(--red); }
+.check[data-state="skip"] .icon { background: var(--amber-soft); color: var(--amber); }
+.check .name { color: var(--text-strong); font-weight: 700; }
+.check .detail {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  word-break: break-all;
+  margin-top: 2px;
+}
+.check .hint {
+  color: var(--muted-dim);
+  font-size: 0.77rem;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px dashed var(--border-soft);
+}
+.check .detail:empty, .check .hint:empty { display: none; }
+
+.meta {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--blue-soft);
+  border: 1px solid rgba(90, 162, 255, 0.22);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.meta b { color: var(--text); }
+
+/* ── Lane / card preview ───────────────────────────────────────────────── */
+.shoe-panel { margin-top: 18px; display: none; }
+.shoe-panel.show { display: block; }
+.shoe-panel h3 {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--muted);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.lane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 14px 0 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: 0.03em;
+}
+.lane-head:first-child { margin-top: 0; }
+.lane-cards { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+.shoe-cards { display: flex; flex-wrap: wrap; gap: 6px; }
+.shoe-card {
+  width: 42px;
+  height: 58px;
+  background: linear-gradient(170deg, #fff, #e8ecf3);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.05;
+  font-weight: 800;
+  font-size: 0.82rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  color: #14181f;
+  position: relative;
+}
+.shoe-card.red { color: #c62828; }
+.shoe-card .idx {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  font-size: 0.52rem;
+  font-weight: 700;
+  color: #9aa3b2;
+}
+.shoe-list {
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 0.73rem;
+  line-height: 1.7;
+  color: #9ae6c4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+
+/* ── Code / formula blocks ─────────────────────────────────────────────── */
+.formula {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  line-height: 1.65;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 13px 15px;
+  color: #9ae6c4;
+  white-space: pre;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.fy-key-out {
+  display: none;
+  margin-top: 14px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+.fy-key-out.show { display: block; }
+.fy-key-out .lbl {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.fy-key-out code {
+  display: block;
+  background: none;
+  border: none;
+  padding: 0;
+  color: #9ae6c4;
+  font-size: 0.73rem;
+  line-height: 1.7;
+  word-break: break-all;
+}
+
+/* ── Accordions ────────────────────────────────────────────────────────── */
+details.tech { padding: 0; overflow: hidden; }
+details.tech > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-strong);
+  transition: background 0.15s;
+}
+details.tech > summary:hover { background: var(--surface-2); }
+details.tech > summary::-webkit-details-marker { display: none; }
+details.tech > summary::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--blue);
+  border-bottom: 2px solid var(--blue);
+  transform: rotate(-45deg);
+  margin: -2px 3px 0 2px;
+  transition: transform 0.18s;
+}
+details.tech[open] > summary::before { transform: rotate(45deg); margin-top: -4px; }
+details.tech[open] > summary { border-bottom: 1px solid var(--border-soft); }
+details.tech > summary .hint-inline {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 500;
+  text-align: right;
+}
+details.tech .tech-body { padding: 18px 20px 20px; }
+details.tech .tech-body h3 {
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: var(--gold);
+  margin: 20px 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+details.tech .tech-body h3:first-child { margin-top: 0; }
+
+.glossary dl { font-size: 0.86rem; }
+.glossary dt { color: var(--gold); font-weight: 700; margin-top: 15px; }
+.glossary dt:first-child { margin-top: 0; }
+.glossary dd { color: var(--muted); margin: 3px 0 0; max-width: 76ch; }
+
+.proof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.proof-card {
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  font-size: 0.84rem;
+  color: var(--muted);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-3);
+}
+.proof-card h4 {
+  font-size: 0.78rem;
+  font-weight: 800;
+  margin-bottom: 7px;
+  letter-spacing: 0.03em;
+}
+.proof-card.yes { border-color: rgba(61, 220, 132, 0.28); background: var(--green-soft); }
+.proof-card.yes h4 { color: var(--green); }
+.proof-card.no { border-color: rgba(255, 182, 72, 0.28); background: var(--amber-soft); }
+.proof-card.no h4 { color: var(--amber); }
+.proof-card strong { color: var(--text); }
+
+.footer {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted-dim);
+  font-size: 0.76rem;
+  text-align: center;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  body { padding: 0 12px 48px; }
+  .masthead { padding: 22px 0 16px; }
+  .steps, .row, .proof-grid { grid-template-columns: 1fr; }
+  .panel { padding: 16px; }
+  details.tech > summary { padding: 14px 16px; flex-wrap: wrap; }
+  details.tech > summary .hint-inline { margin-left: 0; flex-basis: 100%; text-align: left; padding-left: 17px; }
+  details.tech .tech-body { padding: 16px; }
+  .shoe-card { width: 36px; height: 50px; font-size: 0.74rem; }
+  .actions button { flex: 1 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+  button:hover { transform: none; }
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#verifier">Skip to the verifier</a>
+
+<main class="wrap">
+  <header class="masthead">
+    <div class="brand">
+      <span class="spade" aria-hidden="true">♠</span>
+      <div>
+        <span class="kicker">BJ21</span>
+        <h1>Offline Round Verify</h1>
+      </div>
+    </div>
+    <ul class="trust">
+      <li>No network calls</li>
+      <li>Web Crypto only</li>
+      <li>Works from file://</li>
+    </ul>
+  </header>
+
+  <p class="lede">
+    Paste a finished round’s audit JSON and this page re-derives <strong>every card that was dealt</strong>
+    on your own machine. If they match, the deck was fixed before anyone acted — and you didn’t have to
+    trust the game server to know it.
+  </p>
+
+  <ol class="steps">
+    <li class="step">
+      <span class="num">1</span>
+      <div><strong>Finish a round.</strong> In the game, click <strong>📋 Audit JSON</strong> — enabled once the round is over and the server seed is revealed.</div>
+    </li>
+    <li class="step">
+      <span class="num">2</span>
+      <div><strong>Paste it below.</strong> Or open a shared <code>?audit=…</code> link, which fills in and runs everything for you.</div>
+    </li>
+    <li class="step">
+      <span class="num">3</span>
+      <div><strong>Press Verify.</strong> Green means every card came from seeds locked in before the round. Red checks explain themselves.</div>
+    </li>
+  </ol>
+
+  <section class="panel panel-hero" id="verifier">
+    <h2><span class="step-badge" aria-hidden="true">1</span> Round data</h2>
+    <p class="note">Nothing you paste leaves this page — there is no network code in it at all.</p>
+
+    <div class="tabs" role="tablist" aria-label="Input method">
+      <button type="button" class="tab active" data-tab="json" role="tab" aria-selected="true" aria-controls="tab-json">Paste JSON</button>
+      <button type="button" class="tab" data-tab="form" role="tab" aria-selected="false" aria-controls="tab-form">Manual form</button>
+    </div>
+
+    <div id="tab-json" class="tab-panel active" role="tabpanel">
+      <label for="jsonInput">Round audit JSON</label>
+      <textarea id="jsonInput" spellcheck="false" placeholder='{ "version": 2, "serverSeed": "…", "serverCommitment": "…", "nonce": 1, "seats": [ … ], "dealtCards": [ … ], "pinned": { … } }'></textarea>
+      <div class="input-status" id="jsonStatus" aria-live="polite"></div>
+      <p class="note" style="margin-top:10px">
+        <code>dealtCards</code> and <code>pinned</code> power the strongest checks. It still runs without
+        them — the report just marks those checks as unproven rather than passed.
+      </p>
+      <div class="actions">
+        <button type="button" class="btn-secondary" id="btnLoadExample">Load example</button>
+        <button type="button" class="btn-ghost" id="btnJsonToForm">Transfer to form</button>
+        <button type="button" class="btn-ghost" id="btnClearJson">Clear</button>
+      </div>
+    </div>
+
+    <div id="tab-form" class="tab-panel" role="tabpanel">
+      <p class="note">
+        Enter seeds by hand. <strong>Box number is required</strong> for each seat — it feeds into the lane key.
+        Leaving a commitment empty makes that box’s check <strong>fail</strong>, by design: a seed always
+        matches a hash you compute from it, so only a pre-published commitment proves anything.
+      </p>
+      <div class="row">
+        <div>
+          <label for="serverSeed">Server seed — revealed, 64 hex</label>
+          <input type="text" id="serverSeed" maxlength="128" autocomplete="off" spellcheck="false">
+        </div>
+        <div>
+          <label for="serverCommitment">Server commitment — SHA-256, 64 hex</label>
+          <input type="text" id="serverCommitment" maxlength="128" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="nonce">Nonce — round number</label>
+          <input type="text" id="nonce" inputmode="numeric" autocomplete="off">
+        </div>
+        <div>
+          <label for="chainTip">Chain tip — pinned on first connect</label>
+          <input type="text" id="chainTip" maxlength="128" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="pinnedCommitment">Pinned commitment — saved before the round</label>
+          <input type="text" id="pinnedCommitment" maxlength="128" autocomplete="off" spellcheck="false">
+        </div>
+        <div>
+          <label for="previousServerSeed">Previous round server seed — chain link</label>
+          <input type="text" id="previousServerSeed" maxlength="128" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+      <div class="row">
+        <div style=" flex:1 1 100%">
+          <label for="pinnedClientCommitsJson">Pinned per-box commitments — JSON {"box": "seal"}</label>
+          <textarea id="pinnedClientCommitsJson" spellcheck="false" style="min-height:64px"
+            placeholder='{ "4": "64 hex seal saved before the round (Ready window)" }'></textarea>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="numClients">Number of client seeds</label>
+          <select id="numClients">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+          </select>
+        </div>
+      </div>
+      <div id="clientFields"></div>
+      <label for="dealtCardsJson">dealtCards JSON — required to verify the deal itself</label>
+      <textarea id="dealtCardsJson" spellcheck="false" placeholder='[ { "lane": 1, "cursor": 0, "to": "player", "box": 1, "rank": "A", "suit": "♠" }, … ]' style="min-height:110px"></textarea>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="btn-primary" id="btnVerify">🔍 Verify round</button>
+      <button type="button" class="btn-ghost" id="btnHashOnly">Compute SHA-256 only</button>
+      <span class="hotkey"><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+    </div>
+    <div class="error-inline" id="parseError" role="alert"></div>
+  </section>
+
+  <section class="panel" id="resultPanel">
+    <h2><span class="step-badge" aria-hidden="true">2</span> Result</h2>
+    <p class="note">
+      Every check says what it proves. A ❌ always comes with a note telling you whether it is a gap in
+      your input — you had no pinned copy, say — or a genuine mismatch. Only a genuine mismatch indicts the round.
+    </p>
+
+    <div class="empty-state" id="resultEmpty">
+      <span class="big" aria-hidden="true">🔍</span>
+      <span>No round checked yet — paste audit JSON above and press <strong>Verify round</strong>.</span>
+    </div>
+
+    <div class="result" id="resultBanner" role="status"></div>
+    <div class="tally" id="resultSummary"></div>
+    <div class="checks" id="checks"></div>
+    <div class="meta" id="meta"></div>
+
+    <div class="shoe-panel" id="shoePanel">
+      <h3>Lanes — first 12 cards per stream</h3>
+      <div class="shoe-cards" id="shoeCards"></div>
+      <div class="shoe-list" id="shoeList"></div>
+    </div>
+  </section>
+
+  <h2 class="section-title">How it works</h2>
+
+  <details class="panel tech">
+    <summary>What this page does and doesn’t prove<span class="hint-inline">start here</span></summary>
+    <div class="tech-body">
+      <div class="proof-grid">
+        <div class="proof-card yes">
+          <h4>✓ Proven here</h4>
+          The server seed is linked to the published chain, every client seed was locked in advance, and
+          <strong>every dealt card</strong> can be reproduced in order from its lane. Your box’s cards
+          depend only on <strong>your</strong> seed.
+        </div>
+        <div class="proof-card no">
+          <h4>✗ Not proven here</h4>
+          Whether an opponent is human or a bot. It doesn’t change your outcome: a bot cannot affect your
+          seed, your cards, or your card flow. What the house <em>can</em> still do is
+          <strong>cancel a whole round</strong> — visible to everyone through the cancellation rate and burned seeds.
+        </div>
+      </div>
+      <p class="note" style="margin-top:14px">
+        Everything runs locally. Save this file and open it with no internet at all, or host your own copy
+        on a domain you control — it will give the same answer.
+      </p>
+    </div>
+  </details>
+
+  <details class="panel tech">
+    <summary>Glossary<span class="hint-inline">the words used on this page</span></summary>
+    <div class="tech-body glossary">
+      <dl>
+        <dt>Seed</dt>
+        <dd>A random 64-character hex string. The server has one per round; every box (seat) has its own. Cards are computed from these — and nothing else.</dd>
+        <dt>Commitment</dt>
+        <dd>The SHA-256 hash of a seed, published <em>before</em> the round. Hashing is one-way, so the hash proves the seed existed in advance without revealing it.</dd>
+        <dt>Hash chain &amp; chain tip</dt>
+        <dd>The server’s seeds are pre-built as a chain: each seed is the hash of the next one. Only the tip is published at startup, and every revealed seed must hash to the previous link — so the sequence cannot be reordered or replaced mid-game.</dd>
+        <dt>Pinned copy</dt>
+        <dd>A copy of the commitment or chain tip your browser saved <em>before</em> the round. This page checks against that copy — not against whatever a server claims now. If you never pinned one, that check is skipped as <em>unproven</em> (amber), not reported as cheating.</dd>
+        <dt>Lane</dt>
+        <dd>An independent card stream. Each box’s cards come only from its own seed; the dealer lane comes from all revealed seeds. Nobody else’s choices can shift your lane.</dd>
+        <dt>Nonce</dt>
+        <dd>The round number, mixed into the formula so the same seeds can never produce the same cards twice.</dd>
+        <dt>dealtCards</dt>
+        <dd>The log of which card came from which lane, in order. With it, the verifier reproduces every card you actually saw — the strongest check on this page.</dd>
+      </dl>
+    </div>
+  </details>
+
+  <details class="panel tech">
+    <summary>How cards are dealt<span class="hint-inline">lanes · dealer · Fisher–Yates</span></summary>
+    <div class="tech-body">
+      <p class="note">
+        There is <strong>no shared shoe</strong>. Each box and the dealer own an independent
+        6-deck stream (a <em>lane</em>). Your hits cannot move anyone else’s cards; a house
+        bot cannot steer the dealer by playing another seat.
+      </p>
+
+      <h3>Step A — Lane keys (HMAC-SHA512)</h3>
+      <p class="note">
+        A lane key is a 128-hex (512-bit) value. It is the input to the shuffle — not a card yet.
+        The <code>key</code> argument of HMAC is the <strong>server seed</strong>;
+        <code>message</code> is the UTF-8 string below.
+      </p>
+      <div class="formula">// Box b (player seat) — depends only on THAT box’s client seed
+seatKey_b = HMAC-SHA512(
+  key  = serverSeed,
+  msg  = "seat:" + b + ":" + clientSeed_b + ":" + nonce
+)
+
+// Dealer — every revealed client seed, sorted lexicographically, comma-joined
+// (one player → just that seed; multi → sort then join with ",")
+dealerKey = HMAC-SHA512(
+  key  = serverSeed,
+  msg  = "dealer:" + sort(clientSeeds).join(",") + ":" + nonce
+)
+
+// Example (nonce=10, single client seed):
+//   msg = "dealer:0d44fcc8…d79695:10"
+//   dealerKey = 1ecc79bc…48fe1   ← this IS the dealer lane key (aka combinedSeed)
+// Cards are NOT read from the hex digits of dealerKey.
+// dealerKey only seeds the Fisher–Yates below.</div>
+
+      <h3>Step B — Build a fresh 6-deck shoe</h3>
+      <p class="note">
+        Order is fixed and identical on every machine:
+        6 × (suits ♠♥♦♣) × (ranks A,2…10,J,Q,K) → 312 cards.
+        Inner loops: for each deck, for each suit, for each rank.
+      </p>
+      <div class="formula">deck = []
+for d in 0..5:
+  for suit in [♠, ♥, ♦, ♣]:
+    for rank in [A,2,3,4,5,6,7,8,9,10,J,Q,K]:
+      deck.push({ rank, suit })
+// length = 312  (NUM_DECKS * 4 * 13)</div>
+
+      <h3>Step C — Partial Fisher–Yates + rejection sampling</h3>
+      <p class="note">
+        Only the first <code>count</code> positions are shuffled (prefix-stable: drawing 24
+        cards yields the same first 5 as drawing 5). Randomness comes from
+        <code>HMAC-SHA256(laneKey, "fy:" + counter)</code>, not from the lane key hex itself.
+        The counter starts at 1 and increments on every sample attempt, including rejections.
+      </p>
+      <div class="formula">function drawCards(laneKeyHex, count):
+  deck = buildDeck()          // 312 cards
+  n = 312
+  drawCounter = 0
+  next = () =&gt; (++drawCounter)
+
+  for i in 0 .. count-1:
+    range = n - i             // remaining unshuffled tail length
+    // unbiased j in [i, n):
+    offset = unbiasedIndex(laneKeyHex, range, next)   // ∈ [0, range)
+    j = i + offset
+    swap(deck[i], deck[j])
+
+  return deck[0 .. count-1]
+
+
+function unbiasedIndex(laneKey, range, nextCounter):
+  MOD   = 2^32                // 0x100000000
+  limit = floor(MOD / range) * range   // largest multiple of range &lt; 2^32
+  loop forever:
+    c   = nextCounter()       // 1, 2, 3, …
+    buf = HMAC-SHA256(laneKey, "fy:" + c)   // 32 bytes
+    j   = uint32_be(buf[0..3])              // first 4 bytes, big-endian
+    if j &lt; limit:
+      return j % range        // uniform in [0, range)
+    // else reject and try next counter (avoids modulo bias)</div>
+
+      <h3>Step D — Who gets which card?</h3>
+      <p class="note">
+        The initial deal and every hit pull the next card from the relevant lane’s precomputed stream
+        (cursor 0, 1, 2, …). The dealer always uses <code>lane 0</code>; box <code>b</code> uses
+        <code>lane b</code>. The audit log <code>dealtCards[]</code> records
+        <code>{ lane, cursor, to, box, rank, suit }</code> so you can replay every card.
+      </p>
+      <div class="formula">// Per round, after all reveals:
+lanes[0] = drawCards(dealerKey, 24)          // dealer stream
+lanes[b] = drawCards(seatKey_b, 24)          // each seated box
+
+// Deal order example (1 player at box 4):
+//   player card 1 ← lanes[4][0]
+//   dealer up     ← lanes[0][0]
+//   player card 2 ← lanes[4][1]
+//   dealer hole   ← lanes[0][1]
+//   player hit    ← lanes[4][2]
+//   dealer hit    ← lanes[0][2]
+//   …</div>
+
+      <h3>Worked example — dealer lane, nonce 10</h3>
+      <div class="formula">serverSeed  = 437b92c4cd85f808f60173f692bf5c5d2e71657c9ff5c4815ce2ee0a52f70be8
+// SHA-256(serverSeed) must equal the published commitment:
+//   34285dc8d9e9f16ac44139a33d97829eb4ba122b2c5adc83c977c3d075fdb897  ✓
+
+clientSeed  = 0d44fcc82359745e2c4afc94631526c38098858995f907665a00a92193d79695
+// SHA-256(clientSeed) = clientCommit (the commitment is the hash, not the lane key):
+//   8bdd0348519f2e000400fca5bf1e23a85faedfea3504e4d486228074a70927ca
+
+msg         = "dealer:" + clientSeed + ":10"
+dealerKey   = HMAC-SHA512(serverSeed, msg)
+            = 1ecc79bcd4be1a62a4aec29a6da5c556b91245381fbdcc76ab2f8fc855971243
+              428d55e4e53a0598b5adc64390da5245480e945c724279051e8e7ef0fb848fe1
+
+// Then Fisher–Yates with that dealerKey yields the dealer lane, e.g.:
+//   cursor 0 → A♦   (up card)
+//   cursor 1 → 3♣   (hole)
+//   cursor 2 → 7♠   (first hit, if needed)
+//   …</div>
+      <p class="note" style="margin-top:12px">
+        <strong>Common pitfall:</strong> the HMAC-SHA512 output (<code>dealerKey</code>) is
+        <em>not</em> “the cards in hex”. You have to run Step C on it. And don’t confuse
+        <code>clientCommit = SHA-256(clientSeed)</code> with the lane key — the commit only
+        proves the seed was locked in before the reveal.
+      </p>
+    </div>
+  </details>
+
+  <details class="panel tech">
+    <summary>Verification formula<span class="hint-inline">the five checks, condensed</span></summary>
+    <div class="tech-body">
+      <div class="formula">seatKey_b   = HMAC-SHA512(serverSeed, "seat:" + b + ":" + clientSeed_b + ":" + nonce)
+dealerKey   = HMAC-SHA512(serverSeed, "dealer:" + sort(clientSeeds).join(",") + ":" + nonce)
+cards       = partial Fisher–Yates(6 decks), HMAC-SHA256(laneKey, "fy:N") + rejection sampling
+
+Verify:
+  1) SHA-256(serverSeed) === serverCommitment
+  2) SHA-256(serverSeed) === previous seed in chain (or published tip if none)
+  3) commitment matches the copy pinned BEFORE the round
+  4) SHA-256(clientSeed_b) === clientCommitment_b   (FAIL if no commitment)
+  5) every dealt card matches its lane’s sequential reproduction</div>
+    </div>
+  </details>
+
+  <details class="panel tech">
+    <summary>Audit JSON schema<span class="hint-inline">v2 is current — v1 still accepted</span></summary>
+    <div class="tech-body">
+      <p class="note">
+        Current games export <strong>version 2</strong>: it adds <code>pinned</code>, <code>dealtCards</code>
+        and per-box <code>seats[]</code>. The in-game <strong>Copy proof</strong> button exports
+        <code>kind: "seat-lane-proof"</code> (a single seat); that shape is accepted too, as is
+        version 1’s <code>clients[]</code>.
+      </p>
+      <div class="formula">{
+  "version": 1,
+  "game": "pf-blackjack",
+  "nonce": 7,
+  "serverSeed": "&lt;64 hex&gt;",
+  "serverCommitment": "&lt;64 hex SHA-256(serverSeed)&gt;",
+  "clients": [
+    {
+      "box": 1,
+      "seed": "&lt;64 hex plaintext&gt;",
+      "commitment": "&lt;64 hex SHA-256(seed)&gt;"
+    }
+  ]
+}
+
+// Old format also accepted: "clients":[…] or "clientSeeds":[…]
+// dealtCards not required / ignored — the shoe is generated here</div>
+      <p class="note" style="margin-top:12px">
+        The shoe formula takes the <strong>plaintext client seed</strong>, not its hash — the hash is only
+        for commitment verification. Client seed order does not matter: the verifier applies
+        <code>sort()</code>, exactly as the server does.
+      </p>
+    </div>
+  </details>
+
+  <h2 class="section-title">Advanced tool</h2>
+
+  <details class="panel tech" id="fyPanel">
+    <summary>Fisher–Yates — derive cards from a lane key<span class="hint-inline">seeds → cards, no audit JSON needed</span></summary>
+    <div class="tech-body">
+      <p class="note">
+        Paste a <strong>lane key</strong> (a 128-hex HMAC-SHA512 output) and run the same partial
+        Fisher–Yates the server uses. No commitments, no audit JSON — just seeds → cards. Or compute the
+        lane key from seeds first, then draw. After a full verify, the <strong>→ FY tool</strong> button on
+        any lane fills the key in automatically.
+      </p>
+
+      <div class="fy-mode" role="tablist" aria-label="Lane key source">
+        <button type="button" class="tab active" data-fy="key" role="tab" aria-selected="true">Lane key (direct)</button>
+        <button type="button" class="tab" data-fy="dealer" role="tab" aria-selected="false">Compute dealer key</button>
+        <button type="button" class="tab" data-fy="seat" role="tab" aria-selected="false">Compute seat key</button>
+      </div>
+
+      <div id="fy-sub-key" class="fy-sub active">
+        <label for="fyLaneKey">Lane key — 128 hex (HMAC-SHA512), or 64 hex if you only have SHA-256</label>
+        <textarea id="fyLaneKey" spellcheck="false" style="min-height:76px"
+          placeholder="1ecc79bcd4be1a62a4aec29a6da5c556b91245381fbdcc76ab2f8fc855971243428d55e4e53a0598b5adc64390da5245480e945c724279051e8e7ef0fb848fe1"></textarea>
+        <p class="note" style="margin-top:8px">
+          This is <code>dealerKey</code> / <code>seatKey</code> / the audit field <code>combinedSeed</code> —
+          not the raw client seed, and not SHA-256(clientSeed).
+        </p>
+      </div>
+
+      <div id="fy-sub-dealer" class="fy-sub">
+        <div class="row">
+          <div>
+            <label for="fyServerSeedD">Server seed — 64 hex</label>
+            <input type="text" id="fyServerSeedD" maxlength="128" autocomplete="off" spellcheck="false">
+          </div>
+          <div>
+            <label for="fyNonceD">Nonce</label>
+            <input type="text" id="fyNonceD" inputmode="numeric" autocomplete="off" placeholder="10">
+          </div>
+        </div>
+        <label for="fyClientSeeds">Client seeds — one per line or comma-separated, 64 hex each</label>
+        <textarea id="fyClientSeeds" spellcheck="false" style="min-height:76px"
+          placeholder="0d44fcc82359745e2c4afc94631526c38098858995f907665a00a92193d79695"></textarea>
+        <p class="note" style="margin-top:8px">
+          <code>HMAC-SHA512(serverSeed, "dealer:" + sort(seeds).join(",") + ":" + nonce)</code>
+        </p>
+      </div>
+
+      <div id="fy-sub-seat" class="fy-sub">
+        <div class="row">
+          <div>
+            <label for="fyServerSeedS">Server seed — 64 hex</label>
+            <input type="text" id="fyServerSeedS" maxlength="128" autocomplete="off" spellcheck="false">
+          </div>
+          <div>
+            <label for="fyNonceS">Nonce</label>
+            <input type="text" id="fyNonceS" inputmode="numeric" autocomplete="off" placeholder="10">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="fyBox">Box — 1 to 7</label>
+            <input type="number" id="fyBox" min="1" max="7" value="1">
+          </div>
+          <div>
+            <label for="fyClientSeedS">Client seed for that box — 64 hex</label>
+            <input type="text" id="fyClientSeedS" maxlength="128" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+        <p class="note" style="margin-top:8px">
+          <code>HMAC-SHA512(serverSeed, "seat:" + box + ":" + clientSeed + ":" + nonce)</code>
+        </p>
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <div>
+          <label for="fyCount">Cards to draw — 1 to 312</label>
+          <input type="number" id="fyCount" min="1" max="312" value="24">
+        </div>
+        <div>
+          <label for="fyLabel">Label — optional</label>
+          <input type="text" id="fyLabel" maxlength="40" placeholder="dealer / box 4" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn-primary" id="btnFyDraw">🃏 Draw cards</button>
+        <button type="button" class="btn-secondary" id="btnFyExample">Load dealer example</button>
+        <button type="button" class="btn-ghost" id="btnFyClear">Clear</button>
+      </div>
+      <div class="fy-error" id="fyError" role="alert"></div>
+      <div class="fy-key-out" id="fyKeyOut">
+        <div class="lbl">Lane key used<button type="button" class="btn-tiny" id="btnCopyFyKey">Copy</button></div>
+        <code id="fyKeyValue"></code>
+      </div>
+      <div class="shoe-panel" id="fyShoePanel">
+        <h3 id="fyShoeTitle">Derived stream</h3>
+        <div class="shoe-cards" id="fyShoeCards"></div>
+        <div class="shoe-list" id="fyShoeList"></div>
+      </div>
+    </div>
+  </details>
+
+  <p class="footer">
+    Self-contained · Web Crypto only · same algorithm as <code>server/crypto.js</code> ·
+    save this page and open it offline, or host it on a domain you control.
+  </p>
+</main>
+
+<script>
+/**
+ * BJ21 offline verifier — mirrors server/crypto.js + public/verify.js
+ * No imports, no network. Embed this file anywhere.
+ */
+(function () {
+  'use strict';
+
+  const SUITS = ['♠', '♥', '♦', '♣'];
+  const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+  const NUM_DECKS = 6;
+
+  const $ = (id) => document.getElementById(id);
+
+  function toHex(buf) {
+    return Array.from(new Uint8Array(buf))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  // ── Pure JS crypto fallbacks (when crypto.subtle unavailable, e.g. LAN IP) ──
+
+  function _rotr32(x, n) { return (x >>> n) | (x << (32 - n)); }
+
+  const _K256 = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+
+  function _jsSha256(msgBytes) {
+    const h0 = new Uint32Array([
+      0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+      0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    ]);
+    const w = new Uint32Array(64);
+    const bitLen = msgBytes.length * 8;
+    const padLen = (64 - ((msgBytes.length + 9) % 64)) % 64;
+    const totalLen = msgBytes.length + 1 + padLen + 8;
+    const padded = new Uint8Array(totalLen);
+    padded.set(msgBytes);
+    padded[msgBytes.length] = 0x80;
+    const dv = new DataView(padded.buffer);
+    dv.setUint32(totalLen - 8, Math.floor(bitLen / 0x100000000) >>> 0, false);
+    dv.setUint32(totalLen - 4, bitLen >>> 0, false);
+    for (let off = 0; off < totalLen; off += 64) {
+      for (let t = 0; t < 16; t++) w[t] = dv.getUint32(off + t * 4, false);
+      for (let t = 16; t < 64; t++) {
+        const s0 = _rotr32(w[t - 15], 7) ^ _rotr32(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+        const s1 = _rotr32(w[t - 2], 17) ^ _rotr32(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+        w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;
+      }
+      let a = h0[0], b = h0[1], c = h0[2], d = h0[3];
+      let e = h0[4], f = h0[5], g = h0[6], h = h0[7];
+      for (let t = 0; t < 64; t++) {
+        const S1 = _rotr32(e, 6) ^ _rotr32(e, 11) ^ _rotr32(e, 25);
+        const ch = (e & f) ^ ((~e) & g);
+        const t1 = (h + S1 + ch + _K256[t] + w[t]) >>> 0;
+        const S0 = _rotr32(a, 2) ^ _rotr32(a, 13) ^ _rotr32(a, 22);
+        const maj = (a & b) ^ (a & c) ^ (b & c);
+        const t2 = (S0 + maj) >>> 0;
+        h = g; g = f; f = e; e = (d + t1) >>> 0;
+        d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      h0[0] = (h0[0] + a) >>> 0; h0[1] = (h0[1] + b) >>> 0;
+      h0[2] = (h0[2] + c) >>> 0; h0[3] = (h0[3] + d) >>> 0;
+      h0[4] = (h0[4] + e) >>> 0; h0[5] = (h0[5] + f) >>> 0;
+      h0[6] = (h0[6] + g) >>> 0; h0[7] = (h0[7] + h) >>> 0;
+    }
+    let hex = '';
+    for (let i = 0; i < 8; i++) hex += h0[i].toString(16).padStart(8, '0');
+    return hex;
+  }
+
+  function _jsHmacSha256(keyBytes, msgBytes) {
+    const block = 64;
+    let k = new Uint8Array(keyBytes);
+    if (k.length > block) {
+      const h = _jsSha256(k);
+      k = new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+    }
+    if (k.length < block) {
+      const p = new Uint8Array(block);
+      p.set(k);
+      k = p;
+    }
+    const ipad = new Uint8Array(block);
+    const opad = new Uint8Array(block);
+    for (let i = 0; i < block; i++) {
+      ipad[i] = k[i] ^ 0x36;
+      opad[i] = k[i] ^ 0x5c;
+    }
+    const inner = new Uint8Array(block + msgBytes.length);
+    inner.set(ipad);
+    inner.set(msgBytes, block);
+    const innerHash = _jsSha256(inner);
+    const innerHashBytes = new Uint8Array(innerHash.match(/../g).map(b => parseInt(b, 16)));
+    const outer = new Uint8Array(block + 32);
+    outer.set(opad);
+    outer.set(innerHashBytes, block);
+    const outerHex = _jsSha256(outer);
+    return new Uint8Array(outerHex.match(/../g).map(b => parseInt(b, 16)));
+  }
+
+  function _rotr64(x, n) { return ((x >> BigInt(n)) | (x << (64n - BigInt(n)))) & 0xFFFFFFFFFFFFFFFFn; }
+
+  const _K512 = [
+    0x428a2f98d728ae22n, 0x7137449123ef65cdn, 0xb5c0fbcfec4d3b2fn, 0xe9b5dba58189dbbcn,
+    0x3956c25bf348b538n, 0x59f111f1b605d019n, 0x923f82a4af194f9bn, 0xab1c5ed5da6d8118n,
+    0xd807aa98a3030242n, 0x12835b0145706fben, 0x243185be4ee4b28cn, 0x550c7dc3d5ffb4e2n,
+    0x72be5d74f27b896fn, 0x80deb1fe3b1696b1n, 0x9bdc06a725c71235n, 0xc19bf174cf692694n,
+    0xe49b69c19ef14ad2n, 0xefbe4786384f25e3n, 0x0fc19dc68b8cd5b5n, 0x240ca1cc77ac9c65n,
+    0x2de92c6f592b0275n, 0x4a7484aa6ea6e483n, 0x5cb0a9dcbd41fbd4n, 0x76f988da831153b5n,
+    0x983e5152ee66dfabn, 0xa831c66d2db43210n, 0xb00327c898fb213fn, 0xbf597fc7beef0ee4n,
+    0xc6e00bf33da88fc2n, 0xd5a79147930aa725n, 0x06ca6351e003826fn, 0x142929670a0e6e70n,
+    0x27b70a8546d22ffcn, 0x2e1b21385c26c926n, 0x4d2c6dfc5ac42aedn, 0x53380d139d95b3dfn,
+    0x650a73548baf63den, 0x766a0abb3c77b2a8n, 0x81c2c92e47edaee6n, 0x92722c851482353bn,
+    0xa2bfe8a14cf10364n, 0xa81a664bbc423001n, 0xc24b8b70d0f89791n, 0xc76c51a30654be30n,
+    0xd192e819d6ef5218n, 0xd69906245565a910n, 0xf40e35855771202an, 0x106aa07032bbd1b8n,
+    0x19a4c116b8d2d0c8n, 0x1e376c085141ab53n, 0x2748774cdf8eeb99n, 0x34b0bcb5e19b48a8n,
+    0x391c0cb3c5c95a63n, 0x4ed8aa4ae3418acbn, 0x5b9cca4f7763e373n, 0x682e6ff3d6b2b8a3n,
+    0x748f82ee5defb2fcn, 0x78a5636f43172f60n, 0x84c87814a1f0ab72n, 0x8cc702081a6439ecn,
+    0x90befffa23631e28n, 0xa4506cebde82bde9n, 0xbef9a3f7b2c67915n, 0xc67178f2e372532bn,
+    0xca273eceea26619cn, 0xd186b8c721c0c207n, 0xeada7dd6cde0eb1en, 0xf57d4f7fee6ed178n,
+    0x06f067aa72176fban, 0x0a637dc5a2c898a6n, 0x113f9804bef90daen, 0x1b710b35131c471bn,
+    0x28db77f523047d84n, 0x32caab7b40c72493n, 0x3c9ebe0a15c9bebcn, 0x431d67c49c100d4cn,
+    0x4cc5d4becb3e42b6n, 0x597f299cfc657e2an, 0x5fcb6fab3ad6faecn, 0x6c44198c4a475817n,
+  ];
+
+  function _jsSha512(msgBytes) {
+    const M = 0xFFFFFFFFFFFFFFFFn;
+    let h = [
+      0x6a09e667f3bcc908n, 0xbb67ae8584caa73bn, 0x3c6ef372fe94f82bn, 0xa54ff53a5f1d36f1n,
+      0x510e527fade682d1n, 0x9b05688c2b3e6c1fn, 0x1f83d9abfb41bd6bn, 0x5be0cd19137e2179n,
+    ];
+    const w = new Array(80);
+    const bitLen = BigInt(msgBytes.length * 8);
+    const padLen = (128 - ((msgBytes.length + 17) % 128)) % 128;
+    const totalLen = msgBytes.length + 1 + padLen + 16;
+    const padded = new Uint8Array(totalLen);
+    padded.set(msgBytes);
+    padded[msgBytes.length] = 0x80;
+    const dv = new DataView(padded.buffer);
+    dv.setBigUint64(totalLen - 8, bitLen, false);
+    for (let off = 0; off < totalLen; off += 128) {
+      for (let t = 0; t < 16; t++) w[t] = dv.getBigUint64(off + t * 8, false);
+      for (let t = 16; t < 80; t++) {
+        const s0 = _rotr64(w[t - 15], 1) ^ _rotr64(w[t - 15], 8) ^ (w[t - 15] >> 7n);
+        const s1 = _rotr64(w[t - 2], 19) ^ _rotr64(w[t - 2], 61) ^ (w[t - 2] >> 6n);
+        w[t] = (w[t - 16] + s0 + w[t - 7] + s1) & M;
+      }
+      let [a, b, c, d, e, f, g, hh] = h;
+      for (let t = 0; t < 80; t++) {
+        const S1 = _rotr64(e, 14) ^ _rotr64(e, 18) ^ _rotr64(e, 41);
+        const ch = (e & f) ^ ((~e) & g);
+        const t1 = (hh + S1 + ch + _K512[t] + w[t]) & M;
+        const S0 = _rotr64(a, 28) ^ _rotr64(a, 34) ^ _rotr64(a, 39);
+        const maj = (a & b) ^ (a & c) ^ (b & c);
+        const t2 = (S0 + maj) & M;
+        hh = g; g = f; f = e; e = (d + t1) & M;
+        d = c; c = b; b = a; a = (t1 + t2) & M;
+      }
+      h = h.map((v, i) => (v + [a, b, c, d, e, f, g, hh][i]) & M);
+    }
+    return h.map(v => v.toString(16).padStart(16, '0')).join('');
+  }
+
+  function _jsHmacSha512(keyBytes, msgBytes) {
+    const block = 128;
+    let k = new Uint8Array(keyBytes);
+    if (k.length > block) {
+      const h = _jsSha512(k);
+      k = new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+    }
+    if (k.length < block) {
+      const p = new Uint8Array(block);
+      p.set(k);
+      k = p;
+    }
+    const ipad = new Uint8Array(block);
+    const opad = new Uint8Array(block);
+    for (let i = 0; i < block; i++) {
+      ipad[i] = k[i] ^ 0x36;
+      opad[i] = k[i] ^ 0x5c;
+    }
+    const inner = new Uint8Array(block + msgBytes.length);
+    inner.set(ipad);
+    inner.set(msgBytes, block);
+    const innerHash = _jsSha512(inner);
+    const innerHashBytes = new Uint8Array(innerHash.match(/../g).map(b => parseInt(b, 16)));
+    const outer = new Uint8Array(block + 64);
+    outer.set(opad);
+    outer.set(innerHashBytes, block);
+    return _jsSha512(outer);
+  }
+
+  function _useFallback() {
+    return !globalThis.crypto?.subtle;
+  }
+
+  /** Upper bound for the tip walk: a crafted audit file must not freeze the page. */
+  const MAX_CHAIN_WALK = 1000000;
+
+  /**
+   * SHA-256 applied `n` times to a hex seed (hex string in, hex string out).
+   * Round n's seed reaches the published tip in exactly n hashes. Synchronous
+   * JS SHA on purpose: 100k awaits on SubtleCrypto take seconds.
+   */
+  function walkChain(seedHex, n) {
+    const enc = new TextEncoder();
+    let h = String(seedHex);
+    for (let i = 0; i < n; i++) h = _jsSha256(enc.encode(h));
+    return h;
+  }
+
+  async function sha256Hex(str) {
+    const enc = new TextEncoder();
+    const bytes = enc.encode(str);
+    if (_useFallback()) {
+      return _jsSha256(bytes);
+    }
+    const buf = await crypto.subtle.digest('SHA-256', bytes);
+    return toHex(buf);
+  }
+
+  async function hmacSHA512Hex(key, data) {
+    const enc = new TextEncoder();
+    if (_useFallback()) {
+      return _jsHmacSha512(enc.encode(key), enc.encode(data));
+    }
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(key),
+      { name: 'HMAC', hash: 'SHA-512' },
+      false,
+      ['sign']
+    );
+    const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(data));
+    return toHex(sig);
+  }
+
+  async function hmacSHA256Bytes(key, data) {
+    const enc = new TextEncoder();
+    if (_useFallback()) {
+      return _jsHmacSha256(enc.encode(key), enc.encode(data));
+    }
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(key),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(data));
+    return new Uint8Array(sig);
+  }
+
+  function readU32BE(bytes, offset = 0) {
+    return (
+      ((bytes[offset] << 24) |
+        (bytes[offset + 1] << 16) |
+        (bytes[offset + 2] << 8) |
+        bytes[offset + 3]) >>>
+      0
+    );
+  }
+
+  async function unbiasedIndex(combinedKey, range, nextCounter) {
+    const MOD = 0x100000000;
+    const limit = Math.floor(MOD / range) * range;
+    for (;;) {
+      const c = nextCounter();
+      const buf = await hmacSHA256Bytes(combinedKey, `fy:${c}`);
+      const j = readU32BE(buf, 0);
+      if (j < limit) return j % range;
+    }
+  }
+
+  const DEALER_LANE = 0;
+  const LANE_DRAW = 52;
+
+  /* The following three functions must be IDENTICAL to server/crypto.js and public/verify.js.
+     server/offline-parity.test.mjs parses this file and compares it with the server;
+     any deviation breaks the test. */
+
+  async function seatLaneKey(serverSeed, box, clientSeed, nonce) {
+    return hmacSHA512Hex(serverSeed, `seat:${box}:${clientSeed}:${nonce}`);
+  }
+
+  async function dealerLaneKey(serverSeed, clientSeeds, nonce) {
+    const sorted = [...clientSeeds].sort();
+    return hmacSHA512Hex(serverSeed, `dealer:${sorted.join(',')}:${nonce}`);
+  }
+
+  async function drawCards(laneKey, count) {
+    const deck = [];
+    for (let d = 0; d < NUM_DECKS; d++) {
+      for (const s of SUITS) {
+        for (const r of RANKS) deck.push({ rank: r, suit: s });
+      }
+    }
+    const n = deck.length;
+    let drawCounter = 0;
+    const next = () => {
+      drawCounter += 1;
+      return drawCounter;
+    };
+    for (let i = 0; i < count; i++) {
+      const range = n - i;
+      const j = i + (await unbiasedIndex(laneKey, range, next));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    return deck.slice(0, count);
+  }
+
+  /**
+   * Round verification.
+   *
+   * Two critical rules:
+   *  - If no commitment is provided, the check FAILS. Computing a commitment from
+   *    the seed and saying "matches" proves nothing; every seed matches its own hash.
+   *  - If pinned.commitment is provided, it is compared against the value sent by
+   *    the server at reveal time. Without a pre-round pinned copy, the commit-reveal
+   *    chain alone cannot rule out server manipulation.
+   */
+  // BEGIN ROUND PROOF (scripts/sync-offline-proof.mjs)
+  /** Kriptografiden bağımsız oyun yürütümü. Offline kopyası parity testi altındadır. */
+  function verifyRoundProof({ seats, dealtCards, pinnedClientCommits, roundProof, presentation, scope = 'round' }) {
+    const fail = detail => ({ pass: false, detail });
+    const boxes = (seats || []).map(s => Number(s.box)).sort((a, b) => a - b);
+    if (!boxes.length || new Set(boxes).size !== boxes.length || boxes.some(b => !Number.isInteger(b) || b < 1 || b > 7)) {
+      return fail('Invalid or duplicate seats');
+    }
+    if (scope === 'seat-lane') {
+      return { pass: true, unproven: true, detail: 'Partial seat-lane proof only — no full-round or payout claim' };
+    }
+    for (const box of Object.keys(pinnedClientCommits || {})) {
+      if (!boxes.includes(Number(box))) return fail(`Pinned Box ${box} is missing from this round`);
+    }
+    if (!Array.isArray(dealtCards)) return fail('Missing dealt log');
+    for (const box of [0, ...boxes]) {
+      if (dealtCards.filter(d => d.lane === box).length < 2) return fail(`Lane ${box} has fewer than two initial cards`);
+    }
+    if (!roundProof) return { pass: true, unproven: true, detail: 'Legacy proof: hands, decisions and payouts cannot be verified' };
+    if (roundProof.version !== 1 || !Array.isArray(roundProof.actions) || roundProof.actions.length > 104) {
+      return fail('Unsupported or malformed round transcript');
+    }
+    const value = c => c.rank === 'A' ? 11 : ['K', 'Q', 'J'].includes(c.rank) ? 10 : Number(c.rank);
+    const score = cards => {
+      let total = cards.reduce((n, c) => n + value(c), 0);
+      let aces = cards.filter(c => c.rank === 'A').length;
+      while (total > 21 && aces-- > 0) total -= 10;
+      return total;
+    };
+    const natural = h => !h.fromSplit && h.cards.length === 2 && score(h.cards) === 21;
+    const finished = h => h.stood || score(h.cards) >= 21;
+    const hands = {};
+    let at = 0;
+    const draw = box => {
+      const d = dealtCards[at++];
+      if (!d || d.lane !== box || d.to !== (box === 0 ? 'dealer' : 'player') || d.box !== (box || null)) {
+        throw new Error(`Missing or out-of-order card at draw ${at}`);
+      }
+      return { rank: d.rank, suit: d.suit };
+    };
+    const fresh = (bet, cards = [], fromSplit = false, splitAces = false) => ({
+      bet, cards, fromSplit, splitAces, stood: splitAces, doubled: false,
+    });
+    const next = () => {
+      for (const box of boxes) {
+        const handIndex = hands[box].findIndex(h => !finished(h));
+        if (handIndex >= 0) return { box, handIndex };
+      }
+      return null;
+    };
+    try {
+      if (Object.keys(roundProof.initialBets || {}).length !== boxes.length) throw new Error('Initial bet set differs from seat set');
+      for (const box of boxes) {
+        const bet = roundProof.initialBets?.[box];
+        if (!Number.isInteger(bet) || bet < 10 || bet > 10000) throw new Error(`Invalid initial bet for Box ${box}`);
+        hands[box] = [fresh(bet)];
+      }
+      const dealer = [];
+      for (let r = 0; r < 2; r++) {
+        for (const box of boxes) hands[box][0].cards.push(draw(box));
+        dealer.push(draw(0));
+      }
+      const dealerBJ = dealer.length === 2 && score(dealer) === 21;
+      for (const move of roundProof.actions) {
+        const turn = next();
+        if (dealerBJ || !turn || move.box !== turn.box || move.handIndex !== turn.handIndex) throw new Error('Action is outside the active turn');
+        const { box, handIndex } = turn;
+        const hand = hands[box][handIndex];
+        if (move.action === 'stand') hand.stood = true;
+        else if (move.action === 'hit') {
+          if (hand.splitAces) throw new Error('Hit on split aces');
+          hand.cards.push(draw(box));
+        } else if (move.action === 'double') {
+          if (hand.cards.length !== 2 || hand.splitAces) throw new Error('Invalid double');
+          hand.bet *= 2;
+          hand.doubled = true;
+          hand.cards.push(draw(box));
+          hand.stood = true;
+        } else if (move.action === 'split') {
+          if (hands[box].length !== 1 || hand.cards.length !== 2 || hand.fromSplit || value(hand.cards[0]) !== value(hand.cards[1])) throw new Error('Invalid split');
+          const [a, b] = hand.cards;
+          const aces = a.rank === 'A' && b.rank === 'A';
+          hands[box] = [fresh(hand.bet, [a, draw(box)], true, aces), fresh(hand.bet, [b, draw(box)], true, aces)];
+        } else throw new Error('Unknown action');
+      }
+      if (!dealerBJ && next()) throw new Error('Transcript ends before players finish');
+      const alive = boxes.some(b => hands[b].some(h => score(h.cards) <= 21));
+      if (!dealerBJ && alive) while (score(dealer) < 17) dealer.push(draw(0));
+      if (at !== dealtCards.length) throw new Error('Extra cards after the round ends');
+      const results = {};
+      for (const box of boxes) {
+        const rows = hands[box].map(h => {
+          const ps = score(h.cards), ds = score(dealer), pBJ = natural(h), bet = h.bet;
+          let label, payout;
+          if (ps > 21) { label = 'BUST'; payout = 0; }
+          else if (pBJ && !dealerBJ) { label = 'BLACKJACK'; payout = bet + Math.floor(bet * 1.5); }
+          else if (dealerBJ && !pBJ) { label = 'Loss (dealer BJ)'; payout = 0; }
+          else if (ds > 21 || ps > ds) { label = 'Win'; payout = bet * 2; }
+          else if (ps < ds) { label = 'Loss'; payout = 0; }
+          else { label = 'Push'; payout = bet; }
+          return { label, ps, payout, bet };
+        });
+        results[box] = {
+          label: rows.length === 1 ? rows[0].label : rows.map((r, i) => `H${i + 1}:${r.label}`).join(' · '),
+          ps: rows[0].ps, payout: rows.reduce((n, r) => n + r.payout, 0),
+          bet: rows.reduce((n, r) => n + r.bet, 0), hands: rows,
+        };
+      }
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const cardList = cards => (cards || []).map(c => ({ rank: c.rank, suit: c.suit }));
+      const handList = rows => (rows || []).map(h => ({
+        cards: cardList(h.cards), bet: h.bet, doubled: !!h.doubled,
+        stood: !!h.stood, fromSplit: !!h.fromSplit, splitAces: !!h.splitAces,
+      }));
+      const resultRow = r => r && ({ label: r.label, ps: r.ps, payout: r.payout, bet: r.bet });
+      const result = r => r && ({ ...resultRow(r), hands: (r.hands || []).map(resultRow) });
+      for (const supplied of [roundProof, ...(presentation ? [presentation] : [])]) {
+        if (Object.keys(supplied.hands || {}).length !== boxes.length || Object.keys(supplied.results || {}).length !== boxes.length) throw new Error('Displayed seat set differs from transcript');
+        if (!same(cardList(dealer), cardList(supplied.dealerHand))) throw new Error('Dealer hand differs from dealt log');
+        for (const box of boxes) {
+          if (!same(handList(hands[box]), handList(supplied.hands?.[box]))) throw new Error(`Box ${box} hands differ from replay`);
+          if (!same(result(results[box]), result(supplied.results?.[box]))) throw new Error(`Box ${box} payout/result differs from replay`);
+        }
+      }
+      return { pass: true, detail: 'Complete deal, legal turns, dealer rules, hands and payouts match replay' };
+    } catch (e) { return fail(e.message); }
+  }
+  // END ROUND PROOF
+
+  async function verifyRound({
+    serverSeed,
+    serverCommitment,
+    pinnedCommitment,
+    pinnedClientCommits,
+    chainTip,
+    previousServerSeed,
+    seats,
+    nonce,
+    dealtCards,
+    roundProof,
+    presentation,
+    scope = 'round',
+  }) {
+    const report = { ok: true, unproven: false, checks: [], lanePreview: [] };
+    const add = (name, pass, detail = '', meta = {}) => {
+      const skipped = !!meta.skipped;
+      const unproven = !!meta.unproven;
+      report.checks.push({ name, pass, detail, skipped, unproven });
+      if (!pass && !skipped) report.ok = false;
+      if (unproven) report.unproven = true;
+    };
+
+    const norm = (s) => String(s || '').trim().toLowerCase();
+    const HEX64 = /^[0-9a-f]{64}$/;
+    serverSeed = norm(serverSeed);
+    serverCommitment = norm(serverCommitment);
+    pinnedCommitment = norm(pinnedCommitment);
+    chainTip = norm(chainTip);
+    previousServerSeed = norm(previousServerSeed);
+
+    if (!HEX64.test(serverSeed)) {
+      add('Server seed format', false, 'must be 64 hex characters');
+      return report;
+    }
+    if (!HEX64.test(serverCommitment)) {
+      add('Server commitment format', false, 'must be 64 hex characters');
+      return report;
+    }
+    if (nonce === '' || nonce == null || Number.isNaN(Number(nonce))) {
+      add('Nonce', false, 'valid number required');
+      return report;
+    }
+
+    const seatList = (seats || [])
+      .map((s) => ({
+        box: Number(s.box),
+        clientSeed: norm(s.clientSeed || s.seed),
+        clientCommit: norm(s.clientCommit || s.commitment),
+      }))
+      .filter((s) => s.clientSeed);
+    if (!seatList.length) {
+      add('Client seeds', false, 'at least 1 box + seed required');
+      return report;
+    }
+    for (const s of seatList) {
+      if (!Number.isInteger(s.box) || s.box < 1 || s.box > 7) {
+        add('Box number', false, `invalid box: ${s.box} (must be 1-7)`);
+        return report;
+      }
+    }
+
+    const sc = await sha256Hex(serverSeed);
+    add(
+      'Server seed commitment',
+      sc === serverCommitment,
+      sc === serverCommitment
+        ? 'SHA-256(serverSeed) matches'
+        : `${sc.slice(0, 16)}… ≠ ${serverCommitment.slice(0, 16)}…`
+    );
+
+    if (HEX64.test(pinnedCommitment)) {
+      add(
+        'Commitment matches pre-round pinned copy',
+        pinnedCommitment === serverCommitment,
+        pinnedCommitment === serverCommitment
+          ? 'server did not change commitment after the fact'
+          : `PINNED ${pinnedCommitment.slice(0, 16)}… ≠ RECEIVED ${serverCommitment.slice(0, 16)}…`
+      );
+    } else {
+      add(
+        'Commitment matches pre-round pinned copy',
+        true,
+        'No pinned copy — commitment accepted as sent (unproven, not a mismatch)',
+        { skipped: true, unproven: true }
+      );
+    }
+
+    // Round n's seed hashes to the tip in exactly n steps, so any round links
+    // to the pinned/posted tip — not just round 1.
+    const n = Number(nonce);
+    if (HEX64.test(chainTip)) {
+      if (!Number.isInteger(n) || n < 1) {
+        add('Chain to tip', false, 'nonce must be a positive integer');
+      } else if (n > MAX_CHAIN_WALK) {
+        add(
+          'Chain to tip',
+          true,
+          `nonce ${n} is beyond the ${MAX_CHAIN_WALK}-link walk limit — not checked`,
+          { skipped: true, unproven: true }
+        );
+      } else {
+        const top = walkChain(serverSeed, n);
+        add(
+          'Chain to tip',
+          top === chainTip,
+          top === chainTip
+            ? `seed is ${n} link${n === 1 ? '' : 's'} below the pinned tip`
+            : `SHA-256^${n}(seed)=${top.slice(0, 16)}… ≠ tip ${chainTip.slice(0, 16)}…`
+        );
+      }
+    }
+    if (HEX64.test(previousServerSeed)) {
+      add(
+        'Chain link (previous round seed)',
+        sc === previousServerSeed,
+        sc === previousServerSeed
+          ? 'seed is chained — server cannot change the seed sequence after the fact'
+          : `SHA-256(seed)=${sc.slice(0, 16)}… ≠ ${previousServerSeed.slice(0, 16)}…`
+      );
+    } else if (!HEX64.test(chainTip)) {
+      add(
+        'Chain link',
+        true,
+        'chainTip / previous seed not provided — chain unproven',
+        { skipped: true, unproven: true }
+      );
+    }
+
+    for (const s of seatList) {
+      if (!HEX64.test(s.clientSeed)) {
+        add(`Box ${s.box} client seed`, false, 'must be 64 hex');
+        continue;
+      }
+      const pinnedSeal = String(
+        pinnedClientCommits?.[s.box] ?? pinnedClientCommits?.[String(s.box)] ?? ''
+      ).toLowerCase();
+      const delivered = String(s.clientCommit || '').toLowerCase();
+      const locked = HEX64.test(pinnedSeal) ? pinnedSeal : delivered;
+      if (!HEX64.test(locked)) {
+        add(
+          `Box ${s.box} commitment`,
+          false,
+          'NO commitment — cannot prove the seed was locked in advance'
+        );
+        continue;
+      }
+      const c = await sha256Hex(s.clientSeed);
+      if (HEX64.test(pinnedSeal)) {
+        add(
+          `Box ${s.box} commitment`,
+          c === pinnedSeal,
+          c === pinnedSeal
+            ? 'matched pinned Ready/commit seal'
+            : `${c.slice(0, 12)}… ≠ ${pinnedSeal.slice(0, 12)}…`
+        );
+        if (HEX64.test(delivered) && pinnedSeal !== delivered) {
+          add(
+            `Box ${s.box} seal unchanged`,
+            false,
+            `PINNED ${pinnedSeal.slice(0, 12)}… ≠ RECEIVED ${delivered.slice(0, 12)}…`
+          );
+        }
+      } else if (c === delivered) {
+        add(
+          `Box ${s.box} commitment`,
+          true,
+          'matched server pair — no Ready pin (unproven lock)',
+          { skipped: true, unproven: true }
+        );
+      } else {
+        add(
+          `Box ${s.box} commitment`,
+          false,
+          `${c.slice(0, 12)}… ≠ ${delivered.slice(0, 12)}…`
+        );
+      }
+    }
+
+    const allSeeds = seatList.map((s) => s.clientSeed);
+    const proof = verifyRoundProof({ seats: seatList, dealtCards, pinnedClientCommits, roundProof, presentation, scope });
+    add('Round transcript', proof.pass, proof.detail, { unproven: !!proof.unproven });
+    if (!proof.pass) return report;
+    const laneCards = {};
+    const laneKeys = {};
+    laneKeys[DEALER_LANE] = await dealerLaneKey(serverSeed, allSeeds, nonce);
+    laneCards[DEALER_LANE] = await drawCards(laneKeys[DEALER_LANE], LANE_DRAW);
+    for (const s of seatList) {
+      laneKeys[s.box] = await seatLaneKey(serverSeed, s.box, s.clientSeed, nonce);
+      laneCards[s.box] = await drawCards(laneKeys[s.box], LANE_DRAW);
+    }
+    add(
+      'Lanes generated',
+      true,
+      `dealer + ${seatList.length} boxes · each box ONLY from its own seed`
+    );
+
+    if (dealtCards && dealtCards.length) {
+      const cursors = {};
+      let ok = true;
+      for (const d of dealtCards) {
+        const expectedLane = d.to === 'dealer' ? DEALER_LANE : Number(d.box);
+        if (Number(d.lane) !== expectedLane) {
+          add('Lane discipline', false, `${d.rank}${d.suit} lane ${d.lane}, expected ${expectedLane}`);
+          ok = false;
+          break;
+        }
+        const expectedCursor = cursors[d.lane] ?? 0;
+        if (Number(d.cursor) !== expectedCursor) {
+          add(`Lane ${d.lane} order`, false, `cursor ${d.cursor}, expected ${expectedCursor}`);
+          ok = false;
+          break;
+        }
+        cursors[d.lane] = expectedCursor + 1;
+        const exp = laneCards[d.lane]?.[d.cursor];
+        if (!exp || exp.rank !== d.rank || exp.suit !== d.suit) {
+          add(
+            `Lane ${d.lane} card #${d.cursor}`,
+            false,
+            `expected ${exp ? exp.rank + exp.suit : '?'} ≠ received ${d.rank}${d.suit}`
+          );
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        add(
+          `Dealt ${dealtCards.length} cards`,
+          true,
+          'Every card matches its lane, in order, reproduced exactly'
+        );
+      }
+    } else {
+      add(
+        'Dealt cards',
+        false,
+        'no dealtCards — lanes were generated but whether they were actually dealt could not be verified'
+      );
+    }
+
+    report.lanePreview = Object.entries(laneCards).map(([lane, cards]) => ({
+      lane: Number(lane),
+      label: Number(lane) === DEALER_LANE ? 'DEALER' : `Box ${lane}`,
+      key: laneKeys[lane] || '',
+      cards: cards.slice(0, 12).map((c, i) => ({
+        index: i,
+        rank: c.rank,
+        suit: c.suit,
+        label: c.rank + c.suit,
+      })),
+    }));
+    return report;
+  }
+
+  /** Audit JSON converter — turns v1, v2, or seat-lane-proof into verifyRound arguments. */
+  function parseAuditObject(obj) {
+    if (!obj || typeof obj !== 'object') throw new Error('JSON must be an object');
+
+    if (obj.kind === 'seat-lane-proof' || (obj.box && (obj.clientSeed || obj.seed) && !obj.seats && !obj.clients)) {
+      return parseLaneProofObject(obj);
+    }
+
+    let seats = [];
+    if (Array.isArray(obj.seats) && obj.seats.length) {
+      seats = obj.seats.map((c) => ({
+        box: c.box,
+        clientSeed: c.seed || c.clientSeed,
+        clientCommit: c.commitment || c.clientCommit || '',
+      }));
+    } else if (Array.isArray(obj.clients) && obj.clients.length) {
+      seats = obj.clients.map((c, i) => ({
+        box: c.box != null ? c.box : i + 1,
+        clientSeed: c.seed || c.clientSeed,
+        clientCommit: c.commitment || c.clientCommit || '',
+      }));
+    } else if (Array.isArray(obj.clientSeeds)) {
+      seats = obj.clientSeeds.map((seed, i) => ({
+        box: i + 1,
+        clientSeed: seed,
+        clientCommit: (obj.clientCommitments || [])[i] || '',
+      }));
+    } else {
+      throw new Error('seats[] / clients[] / clientSeeds[] required');
+    }
+
+    return {
+      serverSeed: obj.serverSeed,
+      serverCommitment: obj.serverCommitment || obj.serverCommit,
+      pinnedCommitment: obj.pinned?.commitment || '',
+      pinnedClientCommits: obj.pinned?.clientCommits || {},
+      chainTip: obj.pinned?.chainTip || obj.chain?.tip || '',
+      previousServerSeed: obj.pinned?.previousServerSeed || obj.previousServerSeed || '',
+      seats,
+      nonce: obj.nonce,
+      dealtCards: obj.dealtCards || [],
+      roundProof: obj.roundProof,
+    };
+  }
+
+  /** One-seat receipt from the in-game "Copy proof" button. */
+  function parseLaneProofObject(obj) {
+    const box = Number(obj.box);
+    if (!Number.isInteger(box) || box < 1 || box > 7) {
+      throw new Error('seat-lane-proof: box must be 1–7');
+    }
+    const clientSeed = obj.clientSeed || obj.seed;
+    if (!clientSeed) throw new Error('seat-lane-proof: clientSeed required');
+    const commit =
+      obj.clientCommitment || obj.clientCommit || obj.commitment || '';
+    let dealt = Array.isArray(obj.dealtCards) ? obj.dealtCards.slice() : [];
+    if (!dealt.length && Array.isArray(obj.lane)) {
+      dealt = obj.lane
+        .filter((c) => c && c.dealt && c.rank && c.suit)
+        .map((c, i) => ({
+          lane: box,
+          cursor: Number.isInteger(c.index) ? Math.max(0, c.index - 1) : i,
+          to: 'player',
+          box,
+          rank: c.rank,
+          suit: c.suit,
+        }));
+    }
+    const pinnedCommits = { ...(obj.pinned?.clientCommits || {}) };
+    if (commit) pinnedCommits[box] = commit;
+    return {
+      serverSeed: obj.serverSeed,
+      serverCommitment: obj.serverCommitment || obj.serverCommit,
+      pinnedCommitment: obj.pinnedCommitment || obj.pinned?.commitment || '',
+      pinnedClientCommits: pinnedCommits,
+      chainTip: obj.chainTip || obj.pinned?.chainTip || obj.chain?.tip || '',
+      previousServerSeed: obj.previousServerSeed || obj.pinned?.previousServerSeed || '',
+      seats: [{ box, clientSeed, clientCommit: commit }],
+      nonce: obj.nonce,
+      dealtCards: dealt,
+      scope: 'seat-lane',
+    };
+  }
+
+  function showError(msg) {
+    const el = $('parseError');
+    if (!msg) {
+      el.classList.remove('show');
+      el.textContent = '';
+      return;
+    }
+    el.textContent = msg;
+    el.classList.add('show');
+  }
+
+  function isRedSuit(suit) {
+    return suit === '♥' || suit === '♦' || suit === 'H' || suit === 'D';
+  }
+
+  /**
+   * Plain-English meaning for each check, matched by name.
+   * Lives outside the parity-tested crypto block on purpose — wording is free to evolve.
+   */
+  const CHECK_HINTS = [
+    [/^(Server seed format|Server commitment format|Nonce|Client seeds|Box number)$/, 'Input problem — a required field is missing or malformed. Fix the input and re-run; this says nothing about the round itself.'],
+    [/^Server seed commitment$/, 'The revealed server seed really produces the commitment shown for this round.'],
+    [/^Commitment matches pre-round pinned copy$/, 'Compares the commitment with the copy saved BEFORE the round. No pinned copy → skipped as unproven, not a mismatch.'],
+    [/^Chain to tip/, 'Hashes this round’s seed once per round number and lands on the chain tip — compare that tip with the one the operator posted.'],
+    [/^Chain link/, 'Ties this round’s seed into the published hash chain, so the seed sequence could not be swapped after the fact.'],
+    [/^Box \d+ client seed$/, 'This box’s seed is not valid hex — check the input.'],
+    [/^Box \d+ commitment$/, 'Proves this box’s seed was locked in before any card was dealt. A missing commitment fails by design.'],
+    [/^Lanes generated$/, 'The card streams were rebuilt locally: each box from its own seed, the dealer from all seeds.'],
+    [/^(Lane discipline|Lane \d+ order|Lane \d+ card)/, 'A dealt card does not match its lane — a real mismatch, not an input gap.'],
+    [/^Dealt \d+ cards$/, 'The strongest check: every card you saw is reproduced from the lanes, in the exact order.'],
+    [/^Dealt cards$/, 'Without the dealtCards log, the lanes can be rebuilt but what was actually dealt cannot be proven.'],
+  ];
+
+  function hintFor(name) {
+    for (const [re, hint] of CHECK_HINTS) if (re.test(name)) return hint;
+    return '';
+  }
+
+  const BANNER_STATE = {
+    bad: ['✕', 'Mismatch', 'The seeds or commitments do not match the formula. Read the red checks below.'],
+    warn: ['!', 'Verified, with gaps', 'Hashes and cards match, but a pre-round pin or chain parent is missing. That is unproven — not a mismatch.'],
+    ok: ['✓', 'Verified', 'Commitments and chain are consistent, and every dealt card was reproduced from its lane.'],
+  };
+
+  /** Paint the result banner. `title`/`sub` override the canned copy for that state. */
+  function setBanner(state, title, sub) {
+    const el = $('resultBanner');
+    const [icon, defTitle, defSub] = BANNER_STATE[state] || BANNER_STATE.bad;
+    el.className = 'result show ' + state;
+    el.innerHTML =
+      `<span class="result-icon" aria-hidden="true">${icon}</span>` +
+      `<span><span class="result-title">${escapeHtml(title || defTitle)}</span>` +
+      `<span class="result-sub">${escapeHtml(sub != null ? sub : defSub)}</span></span>`;
+    $('resultEmpty').classList.add('hide');
+  }
+
+  /** Wipe everything the last run rendered and put the empty state back. */
+  function clearReport() {
+    $('resultBanner').className = 'result';
+    $('resultBanner').innerHTML = '';
+    $('resultSummary').innerHTML = '';
+    $('checks').innerHTML = '';
+    $('meta').innerHTML = '';
+    $('shoePanel').classList.remove('show');
+    $('shoeCards').innerHTML = '';
+    $('shoeList').textContent = '';
+    $('resultEmpty').classList.remove('hide');
+  }
+
+  function checkState(c) {
+    if (c.skipped) return 'skip';
+    return c.pass ? 'pass' : 'fail';
+  }
+
+  function renderReport(report) {
+    const checks = $('checks');
+    const meta = $('meta');
+    const shoePanel = $('shoePanel');
+    const shoeCards = $('shoeCards');
+    const shoeList = $('shoeList');
+
+    if (!report.ok) setBanner('bad');
+    else if (report.unproven) setBanner('warn');
+    else setBanner('ok');
+
+    const tally = { pass: 0, fail: 0, skip: 0 };
+    report.checks.forEach((c) => { tally[checkState(c)] += 1; });
+    $('resultSummary').innerHTML =
+      `<span class="t-pass">${tally.pass} passed</span>` +
+      (tally.fail ? `<span class="t-fail">${tally.fail} failed</span>` : '') +
+      (tally.skip ? `<span class="t-skip">${tally.skip} unproven</span>` : '');
+
+    checks.innerHTML = report.checks
+      .map((c) => {
+        const state = checkState(c);
+        const hint = hintFor(c.name);
+        const icon = state === 'pass' ? '✓' : state === 'fail' ? '✕' : '–';
+        return `
+      <div class="check" data-state="${state}">
+        <div class="icon" aria-hidden="true">${icon}</div>
+        <div>
+          <div class="name">${escapeHtml(c.name)}</div>
+          <div class="detail">${escapeHtml(c.detail || '')}</div>
+          ${hint ? `<div class="hint">${escapeHtml(hint)}</div>` : ''}
+        </div>
+      </div>`;
+      })
+      .join('');
+
+    meta.innerHTML =
+      'Each box’s cards are derived solely from its <b>own</b> client seed; ' +
+      'the dealer lane derives from all revealed seeds. One box’s action cannot shift ' +
+      'another box’s or the dealer’s cards.';
+
+    if (report.lanePreview && report.lanePreview.length) {
+      shoePanel.classList.add('show');
+      shoeCards.innerHTML = report.lanePreview
+        .map(
+          (lane, idx) => `
+          <div class="lane-head">
+            ${escapeHtml(lane.label)} lane
+            ${
+              lane.key
+                ? `<button type="button" class="btn-tiny" data-fy-fill="${idx}" title="Load this lane key into the Fisher–Yates tool">→ FY tool</button>`
+                : ''
+            }
+          </div>
+          <div class="lane-cards">
+            ${lane.cards
+              .map((c) => {
+                const red = isRedSuit(c.suit) ? ' red' : '';
+                return `<div class="shoe-card${red}" title="${escapeHtml(lane.label)} #${c.index}">
+                  <span class="idx">${c.index}</span>
+                  <span>${escapeHtml(c.rank)}</span>
+                  <span>${escapeHtml(c.suit)}</span>
+                </div>`;
+              })
+              .join('')}
+          </div>`
+        )
+        .join('');
+      shoeList.textContent = report.lanePreview
+        .map((lane) => {
+          const cards = lane.cards.map((c) => c.label).join(' ');
+          const keyLine = lane.key ? `\n  key: ${lane.key}` : '';
+          return `${lane.label}: ${cards}${keyLine}`;
+        })
+        .join('\n');
+      // Wire "→ FY tool" buttons (keys kept on report, not in DOM attributes).
+      shoeCards.querySelectorAll('[data-fy-fill]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const lane = report.lanePreview[Number(btn.getAttribute('data-fy-fill'))];
+          if (!lane?.key) return;
+          fillFyFromKey(lane.key, lane.label);
+        });
+      });
+    } else {
+      shoePanel.classList.remove('show');
+      shoeCards.innerHTML = '';
+      shoeList.textContent = '';
+    }
+
+    // On a failure the useful thing is the failed row, not the top of the panel —
+    // a single red check can otherwise sit below a screenful of green ones.
+    const firstFail = checks.querySelector('.check[data-state="fail"]');
+    (firstFail || $('resultPanel')).scrollIntoView({
+      behavior: 'smooth',
+      block: firstFail ? 'center' : 'nearest',
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function buildClientFields() {
+    const n = Number($('numClients').value) || 1;
+    const host = $('clientFields');
+    const prev = [];
+    host.querySelectorAll('.seed-block').forEach((block, i) => {
+      prev[i] = {
+        box: block.querySelector('[data-k=box]')?.value || '',
+        seed: block.querySelector('[data-k=seed]')?.value || '',
+        commitment: block.querySelector('[data-k=commitment]')?.value || '',
+      };
+    });
+    host.innerHTML = '';
+    for (let i = 0; i < n; i++) {
+      const block = document.createElement('div');
+      block.className = 'seed-block';
+      block.innerHTML = `
+        <header>Seat ${i + 1}</header>
+        <label>Box number — 1 to 7, required (it feeds the lane key)</label>
+        <input type="number" data-k="box" min="1" max="7"
+          value="${escapeAttr(prev[i]?.box || String(i + 1))}">
+        <label>Plaintext seed — 64 hex</label>
+        <input type="text" data-k="seed" maxlength="128" spellcheck="false" autocomplete="off"
+          value="${escapeAttr(prev[i]?.seed || '')}">
+        <label>Commitment SHA-256 — 64 hex, verification FAILS if left empty</label>
+        <input type="text" data-k="commitment" maxlength="128" spellcheck="false" autocomplete="off"
+          value="${escapeAttr(prev[i]?.commitment || '')}">
+      `;
+      host.appendChild(block);
+    }
+  }
+
+  function escapeAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }
+
+  /** Parse the manual form's pinned per-box commitments JSON: "" → {}, invalid → {}. */
+  function readPinnedClientCommits(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return {};
+    try {
+      const obj = JSON.parse(s);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
+    } catch {
+      // falls through
+    }
+    return {};
+  }
+
+  function readFormPayload() {
+    const seats = [];
+    $('clientFields').querySelectorAll('.seed-block').forEach((block, i) => {
+      seats.push({
+        box: Number(block.querySelector('[data-k=box]')?.value || i + 1),
+        clientSeed: block.querySelector('[data-k=seed]')?.value || '',
+        clientCommit: block.querySelector('[data-k=commitment]')?.value || '',
+      });
+    });
+
+    let dealtCards = [];
+    const dealtRaw = ($('dealtCardsJson')?.value || '').trim();
+    if (dealtRaw) {
+      const parsed = JSON.parse(dealtRaw);
+      if (!Array.isArray(parsed)) throw new Error('dealtCards must be a JSON array');
+      dealtCards = parsed;
+    }
+
+    return {
+      serverSeed: $('serverSeed').value,
+      serverCommitment: $('serverCommitment').value,
+      pinnedCommitment: $('pinnedCommitment') ? $('pinnedCommitment').value : '',
+      chainTip: $('chainTip') ? $('chainTip').value : '',
+      previousServerSeed: $('previousServerSeed') ? $('previousServerSeed').value : '',
+      pinnedClientCommits: readPinnedClientCommits($('pinnedClientCommitsJson')?.value),
+      seats,
+      nonce: $('nonce').value,
+      dealtCards,
+    };
+  }
+
+  function fillFormFromPayload(p) {
+    $('serverSeed').value = p.serverSeed || '';
+    $('serverCommitment').value = p.serverCommitment || '';
+    if ($('chainTip')) $('chainTip').value = p.chainTip || '';
+    if ($('pinnedCommitment')) $('pinnedCommitment').value = p.pinnedCommitment || '';
+    if ($('previousServerSeed')) {
+      $('previousServerSeed').value = p.previousServerSeed || '';
+    }
+    if ($('pinnedClientCommitsJson')) {
+      const pins = p.pinnedClientCommits || {};
+      $('pinnedClientCommitsJson').value = Object.keys(pins).length
+        ? JSON.stringify(pins, null, 0)
+        : '';
+    }
+    $('nonce').value = p.nonce != null ? String(p.nonce) : '';
+    const seats = p.seats || [];
+    const n = Math.max(1, Math.min(7, seats.length || 1));
+    $('numClients').value = String(n);
+    buildClientFields();
+    $('clientFields').querySelectorAll('.seed-block').forEach((block, i) => {
+      block.querySelector('[data-k=box]').value = seats[i]?.box ?? i + 1;
+      block.querySelector('[data-k=seed]').value = seats[i]?.clientSeed || '';
+      block.querySelector('[data-k=commitment]').value = seats[i]?.clientCommit || '';
+    });
+    if ($('dealtCardsJson')) {
+      $('dealtCardsJson').value =
+        p.dealtCards && p.dealtCards.length ? JSON.stringify(p.dealtCards, null, 2) : '';
+    }
+  }
+
+  // Input tabs. Scoped to `.tabs` on purpose: the Fisher-Yates mode switches reuse
+  // the `.tab` class, and an unscoped selector here would clear both input panels.
+  const inputTabs = document.querySelectorAll('.tabs .tab');
+  inputTabs.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      inputTabs.forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', String(on));
+      });
+      document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+      $('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  $('numClients').addEventListener('change', buildClientFields);
+  buildClientFields();
+
+  /** Live read-out under the JSON box, so a bad paste is obvious before pressing Verify. */
+  function refreshJsonStatus() {
+    const el = $('jsonStatus');
+    const raw = $('jsonInput').value.trim();
+    if (!raw) {
+      el.className = 'input-status';
+      el.textContent = '';
+      return;
+    }
+    try {
+      const obj = JSON.parse(raw);
+      const p = parseAuditObject(obj);
+      const bits = [`v${obj.version || 1}`];
+      if (p.nonce != null && p.nonce !== '') bits.push(`nonce ${p.nonce}`);
+      bits.push(`${p.seats.length} seat${p.seats.length === 1 ? '' : 's'}`);
+      const dealt = p.dealtCards ? p.dealtCards.length : 0;
+      bits.push(dealt ? `${dealt} dealt card${dealt === 1 ? '' : 's'}` : 'no dealtCards');
+      bits.push(p.pinnedCommitment ? 'pinned' : 'no pin');
+      el.className = 'input-status good';
+      el.textContent = '✓ ' + bits.join(' · ');
+    } catch (e) {
+      el.className = 'input-status bad';
+      el.textContent = '✕ ' + (e.message || String(e));
+    }
+  }
+  $('jsonInput').addEventListener('input', refreshJsonStatus);
+
+  $('btnClearJson').onclick = () => {
+    $('jsonInput').value = '';
+    showError('');
+    refreshJsonStatus();
+    clearReport();
+  };
+
+  $('btnLoadExample').onclick = async () => {
+    // Prefer real sample next to this file (same origin); fallback to schema template.
+    try {
+      const r = await fetch('./verify-sample-audit.json', { cache: 'no-store' });
+      if (r.ok) {
+        const obj = await r.json();
+        // dealtCards IS PRESERVED: which card came from which lane is this page’s
+        // strongest check — without it only lanes are generated, not the deal.
+        $('jsonInput').value = JSON.stringify(obj, null, 2);
+        showError('');
+        refreshJsonStatus();
+        return;
+      }
+    } catch {
+      /* offline / file:// without sample */
+    }
+    $('jsonInput').value = JSON.stringify(
+      {
+        version: 2,
+        game: 'pf-blackjack',
+        model: 'per-seat-lanes',
+        nonce: 1,
+        serverSeed: '/* 64 hex serverSeed after finish */',
+        serverCommitment: '/* SHA-256(serverSeed) */',
+        pinned: {
+          chainTip: '/* chain tip you pinned on first connect */',
+          commitment: '/* commitment you saw BEFORE the round */',
+          previousServerSeed: '/* revealed seed of the previous round */',
+        },
+        seats: [
+          { box: 1, seed: '/* 64 hex plaintext */', commitment: '/* SHA-256(seed) */' },
+          { box: 2, seed: '/* 64 hex plaintext */', commitment: '/* SHA-256(seed) */' },
+        ],
+        dealtCards: [
+          { lane: 1, cursor: 0, to: 'player', box: 1, rank: 'A', suit: '♠' },
+          { lane: 0, cursor: 0, to: 'dealer', box: null, rank: '7', suit: '♦' },
+        ],
+      },
+      null,
+      2
+    );
+    refreshJsonStatus();
+    showError(
+      'No sample file — template loaded. Copy Audit JSON from the game or use verify-sample-audit.json.'
+    );
+  };
+
+  $('btnJsonToForm').onclick = () => {
+    try {
+      showError('');
+      const obj = JSON.parse($('jsonInput').value);
+      const p = parseAuditObject(obj);
+      fillFormFromPayload(p);
+      document.querySelector('.tabs .tab[data-tab="form"]').click();
+    } catch (e) {
+      showError('JSON parse / schema error: ' + (e.message || e));
+    }
+  };
+
+  $('btnVerify').onclick = async () => {
+    showError('');
+    try {
+      let payload;
+      const jsonTab = $('tab-json').classList.contains('active');
+      if (jsonTab) {
+        const raw = $('jsonInput').value.trim();
+        if (!raw) throw new Error('JSON is empty');
+        payload = parseAuditObject(JSON.parse(raw));
+      } else {
+        payload = readFormPayload();
+      }
+      const report = await verifyRound(payload);
+      renderReport(report);
+    } catch (e) {
+      showError(e.message || String(e));
+      clearReport();
+      setBanner(
+        'bad',
+        'Could not run',
+        'The input could not be read, so nothing was checked. See the message above.'
+      );
+    }
+  };
+
+  // Cmd/Ctrl+Enter verifies from anywhere in the input panel.
+  $('verifier').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      $('btnVerify').click();
+    }
+  });
+
+  $('btnHashOnly').onclick = async () => {
+    showError('');
+    try {
+      let seeds = [];
+      let serverSeed = '';
+      if ($('tab-json').classList.contains('active')) {
+        const obj = JSON.parse($('jsonInput').value || '{}');
+        const p = parseAuditObject(obj);
+        serverSeed = p.serverSeed;
+        seeds = p.seats.map((s) => s.clientSeed).filter(Boolean);
+      } else {
+        serverSeed = $('serverSeed').value;
+        seeds = readFormPayload()
+          .seats.map((s) => s.clientSeed)
+          .filter(Boolean);
+      }
+      const lines = [];
+      if (serverSeed) {
+        lines.push({
+          name: 'SHA-256(serverSeed)',
+          pass: true,
+          detail: await sha256Hex(String(serverSeed).trim().toLowerCase()),
+        });
+      }
+      for (let i = 0; i < seeds.length; i++) {
+        const s = String(seeds[i]).trim().toLowerCase();
+        lines.push({
+          name: `SHA-256(clientSeed #${i + 1})`,
+          pass: true,
+          detail: await sha256Hex(s),
+        });
+      }
+      if (!lines.length) throw new Error('No seeds to hash');
+      renderReport({ ok: true, checks: lines, lanePreview: [] });
+      $('resultSummary').innerHTML = '';
+      setBanner(
+        'ok',
+        'SHA-256 computed',
+        'Hashes only — nothing was compared against a commitment, so this proves nothing on its own.'
+      );
+    } catch (e) {
+      showError(e.message || String(e));
+    }
+  };
+
+  // ── Fisher–Yates standalone tool ─────────────────────────────────────────
+  let fyMode = 'key';
+
+  function showFyError(msg) {
+    const el = $('fyError');
+    if (!msg) {
+      el.classList.remove('show');
+      el.textContent = '';
+      return;
+    }
+    el.textContent = msg;
+    el.classList.add('show');
+  }
+
+  function setFyMode(mode) {
+    fyMode = mode;
+    document.querySelectorAll('.fy-mode .tab').forEach((b) => {
+      const on = b.dataset.fy === mode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', String(on));
+    });
+    ['key', 'dealer', 'seat'].forEach((m) => {
+      const el = $('fy-sub-' + m);
+      if (el) el.classList.toggle('active', m === mode);
+    });
+  }
+
+  document.querySelectorAll('.fy-mode .tab').forEach((btn) => {
+    btn.addEventListener('click', () => setFyMode(btn.dataset.fy));
+  });
+
+  function parseClientSeedList(raw) {
+    return String(raw || '')
+      .split(/[\s,;]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  function fillFyFromKey(key, label) {
+    setFyMode('key');
+    $('fyLaneKey').value = key;
+    if (label) $('fyLabel').value = String(label).toLowerCase();
+    showFyError('');
+    $('fyPanel').open = true;
+    $('fyPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Auto-draw so verify → cards is one click.
+    $('btnFyDraw').click();
+  }
+
+  function renderFyCards(cards, label, laneKey) {
+    const panel = $('fyShoePanel');
+    const title = $('fyShoeTitle');
+    const host = $('fyShoeCards');
+    const list = $('fyShoeList');
+    const keyOut = $('fyKeyOut');
+    const keyVal = $('fyKeyValue');
+
+    title.textContent =
+      (label ? `${label} — ` : '') + `Derived stream (${cards.length} cards, cursor 0…${cards.length - 1})`;
+
+    host.innerHTML = cards
+      .map((c, i) => {
+        const red = isRedSuit(c.suit) ? ' red' : '';
+        return `<div class="shoe-card${red}" title="#${i}">
+          <span class="idx">${i}</span>
+          <span>${escapeHtml(c.rank)}</span>
+          <span>${escapeHtml(c.suit)}</span>
+        </div>`;
+      })
+      .join('');
+
+    list.textContent = cards.map((c, i) => `#${i}:${c.rank}${c.suit}`).join('  ');
+    panel.classList.add('show');
+
+    keyVal.textContent = laneKey;
+    keyOut.classList.add('show');
+  }
+
+  $('btnCopyFyKey').onclick = async () => {
+    const btn = $('btnCopyFyKey');
+    try {
+      await navigator.clipboard.writeText($('fyKeyValue').textContent || '');
+      btn.textContent = 'Copied';
+    } catch {
+      btn.textContent = 'Copy failed';
+    }
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1400);
+  };
+
+  $('btnFyClear').onclick = () => {
+    showFyError('');
+    $('fyLaneKey').value = '';
+    $('fyServerSeedD').value = '';
+    $('fyNonceD').value = '';
+    $('fyClientSeeds').value = '';
+    $('fyServerSeedS').value = '';
+    $('fyNonceS').value = '';
+    $('fyClientSeedS').value = '';
+    $('fyBox').value = '1';
+    $('fyCount').value = '24';
+    $('fyLabel').value = '';
+    $('fyShoePanel').classList.remove('show');
+    $('fyShoeCards').innerHTML = '';
+    $('fyShoeList').textContent = '';
+    $('fyKeyOut').classList.remove('show');
+    $('fyKeyValue').textContent = '';
+  };
+
+  $('btnFyExample').onclick = () => {
+    setFyMode('dealer');
+    $('fyServerSeedD').value =
+      '437b92c4cd85f808f60173f692bf5c5d2e71657c9ff5c4815ce2ee0a52f70be8';
+    $('fyNonceD').value = '10';
+    $('fyClientSeeds').value =
+      '0d44fcc82359745e2c4afc94631526c38098858995f907665a00a92193d79695';
+    $('fyCount').value = '8';
+    $('fyLabel').value = 'dealer example';
+    showFyError('');
+    $('btnFyDraw').click();
+  };
+
+  $('btnFyDraw').onclick = async () => {
+    showFyError('');
+    try {
+      const count = Number($('fyCount').value);
+      if (!Number.isInteger(count) || count < 1 || count > 312) {
+        throw new Error('Card count must be an integer 1–312');
+      }
+
+      const HEX = /^[0-9a-f]+$/;
+      let laneKey = '';
+      let label = ($('fyLabel').value || '').trim();
+
+      if (fyMode === 'key') {
+        laneKey = String($('fyLaneKey').value || '')
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, '');
+        if (!HEX.test(laneKey) || (laneKey.length !== 128 && laneKey.length !== 64)) {
+          throw new Error(
+            'Lane key must be 128 hex (HMAC-SHA512) or 64 hex characters — not a raw client seed alone'
+          );
+        }
+        if (!label) label = 'lane';
+      } else if (fyMode === 'dealer') {
+        const serverSeed = String($('fyServerSeedD').value || '')
+          .trim()
+          .toLowerCase();
+        const nonce = String($('fyNonceD').value || '').trim();
+        const seeds = parseClientSeedList($('fyClientSeeds').value);
+        if (!/^[0-9a-f]{64}$/.test(serverSeed)) throw new Error('Server seed must be 64 hex');
+        if (nonce === '' || Number.isNaN(Number(nonce))) throw new Error('Valid nonce required');
+        if (!seeds.length) throw new Error('At least one client seed required');
+        for (const s of seeds) {
+          if (!/^[0-9a-f]{64}$/.test(s)) throw new Error(`Client seed not 64 hex: ${s.slice(0, 12)}…`);
+        }
+        laneKey = await dealerLaneKey(serverSeed, seeds, nonce);
+        if (!label) label = 'dealer';
+        $('fyLaneKey').value = laneKey;
+      } else {
+        const serverSeed = String($('fyServerSeedS').value || '')
+          .trim()
+          .toLowerCase();
+        const nonce = String($('fyNonceS').value || '').trim();
+        const clientSeed = String($('fyClientSeedS').value || '')
+          .trim()
+          .toLowerCase();
+        const box = Number($('fyBox').value);
+        if (!/^[0-9a-f]{64}$/.test(serverSeed)) throw new Error('Server seed must be 64 hex');
+        if (nonce === '' || Number.isNaN(Number(nonce))) throw new Error('Valid nonce required');
+        if (!/^[0-9a-f]{64}$/.test(clientSeed)) throw new Error('Client seed must be 64 hex');
+        if (!Number.isInteger(box) || box < 1 || box > 7) throw new Error('Box must be 1–7');
+        laneKey = await seatLaneKey(serverSeed, box, clientSeed, nonce);
+        if (!label) label = `box ${box}`;
+        $('fyLaneKey').value = laneKey;
+      }
+
+      const cards = await drawCards(laneKey, count);
+      renderFyCards(cards, label, laneKey);
+    } catch (e) {
+      showFyError(e.message || String(e));
+      $('fyShoePanel').classList.remove('show');
+      $('fyKeyOut').classList.remove('show');
+    }
+  };
+
+  // Deep-link: ?audit=base64url(json) or #audit=...
+  async function tryLoadFromUrl() {
+    try {
+      const params = new URLSearchParams(location.search);
+      let b64 = params.get('audit');
+      if (!b64 && location.hash.startsWith('#audit=')) {
+        b64 = location.hash.slice('#audit='.length);
+      }
+      if (!b64) return;
+      const json = decodeURIComponent(escape(atob(b64.replace(/-/g, '+').replace(/_/g, '/'))));
+      $('jsonInput').value = JSON.stringify(JSON.parse(json), null, 2);
+      refreshJsonStatus();
+      $('btnVerify').click();
+    } catch {
+      /* ignore bad link */
+    }
+  }
+
+  tryLoadFromUrl();
+})();
+</script>
+</body>
+</html>
