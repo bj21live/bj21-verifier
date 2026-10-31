@@ -891,6 +891,8 @@ details.tech .tech-body h3:first-child { margin-top: 0; }
       <div id="clientFields"></div>
       <label for="dealtCardsJson">dealtCards JSON — required to verify the deal itself</label>
       <textarea id="dealtCardsJson" spellcheck="false" placeholder='[ { "lane": 1, "cursor": 0, "to": "player", "box": 1, "rank": "A", "suit": "♠" }, … ]' style="min-height:110px"></textarea>
+      <label for="roundProofJson">roundProof JSON — round transcript (bets, decisions, payouts); without it those stay unproven</label>
+      <textarea id="roundProofJson" spellcheck="false" placeholder='{ "version": 1, "initialBets": { … }, "actions": [ … ], … }' style="min-height:76px"></textarea>
     </div>
 
     <div class="actions">
@@ -2105,7 +2107,7 @@ Verify:
 
   const BANNER_STATE = {
     bad: ['✕', 'Mismatch', 'The seeds or commitments do not match the formula. Read the red checks below.'],
-    warn: ['!', 'Verified, with gaps', 'Hashes and cards match, but a pre-round pin or chain parent is missing. That is unproven — not a mismatch.'],
+    warn: ['!', 'Verified, with gaps', 'Hashes and cards match, but some evidence is missing — a pre-round pin, the chain parent or the round transcript. Read the amber checks below. That is unproven — not a mismatch.'],
     ok: ['✓', 'Verified', 'Commitments and chain are consistent, and every dealt card was reproduced from its lane.'],
   };
 
@@ -2310,6 +2312,15 @@ Verify:
       dealtCards = parsed;
     }
 
+    let roundProof;
+    const proofRaw = ($('roundProofJson')?.value || '').trim();
+    if (proofRaw) {
+      roundProof = JSON.parse(proofRaw);
+      if (!roundProof || typeof roundProof !== 'object' || Array.isArray(roundProof)) {
+        throw new Error('roundProof must be a JSON object');
+      }
+    }
+
     return {
       serverSeed: $('serverSeed').value,
       serverCommitment: $('serverCommitment').value,
@@ -2320,6 +2331,7 @@ Verify:
       seats,
       nonce: $('nonce').value,
       dealtCards,
+      roundProof,
     };
   }
 
@@ -2350,6 +2362,9 @@ Verify:
     if ($('dealtCardsJson')) {
       $('dealtCardsJson').value =
         p.dealtCards && p.dealtCards.length ? JSON.stringify(p.dealtCards, null, 2) : '';
+    }
+    if ($('roundProofJson')) {
+      $('roundProofJson').value = p.roundProof ? JSON.stringify(p.roundProof) : '';
     }
   }
 
